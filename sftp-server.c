@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: sftp-server.c,v 1.117 2019/07/05 04:55:40 djm Exp $ */
 /*
  * Copyright (c) 2000-2004 Markus Friedl.  All rights reserved.
@@ -50,6 +53,15 @@
 
 #include "sftp.h"
 #include "sftp-common.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <synorecycle/synorecycle.h>
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <synologd/synolog.h>
+#endif /* MY_ABC_HERE */
 
 char *sftp_realpath(const char *, char *); /* sftp-realpath.c */
 
@@ -73,6 +85,9 @@ static int init_done;
 /* Disable writes */
 static int readonly;
 
+#ifdef MY_ABC_HERE
+SYNOSftpSessionConfig gConf;
+#endif /* MY_ABC_HERE */
 /* Requests that are allowed/denied */
 static char *request_whitelist, *request_blacklist;
 
@@ -280,6 +295,13 @@ struct Handle {
 	int flags;
 	char *name;
 	u_int64_t bytes_read, bytes_write;
+#ifdef MY_ABC_HERE
+	char *szVirtualName;
+	BOOL IsAllowListDir;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	size_t FileSize;
+#endif /* MY_ABC_HERE */
 	int next_unused;
 };
 
@@ -301,9 +323,20 @@ static void handle_unused(int i)
 }
 
 static int
+#ifdef MY_ABC_HERE
+handle_new(int use, const char *name, const char *szVirtualName, int fd, int flags, DIR *dirp)
+#else
 handle_new(int use, const char *name, int fd, int flags, DIR *dirp)
+#endif /* MY_ABC_HERE */
 {
 	int i;
+#ifdef MY_ABC_HERE
+	struct stat st;
+
+	if (0 > fstat(fd, &st)) {
+		BZERO_STRUCT(st);
+	}
+#endif /* MY_ABC_HERE */
 
 	if (first_unused_handle == -1) {
 		if (num_handles + 1 <= num_handles)
@@ -321,6 +354,12 @@ handle_new(int use, const char *name, int fd, int flags, DIR *dirp)
 	handles[i].fd = fd;
 	handles[i].flags = flags;
 	handles[i].name = xstrdup(name);
+#ifdef MY_ABC_HERE
+	handles[i].szVirtualName = xstrdup(szVirtualName);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	handles[i].FileSize = st.st_size;
+#endif /* MY_ABC_HERE */
 	handles[i].bytes_read = handles[i].bytes_write = 0;
 
 	return i;
@@ -332,6 +371,69 @@ handle_is_ok(int i, int type)
 	return i >= 0 && (u_int)i < num_handles && handles[i].use == type;
 }
 
+#ifdef MY_ABC_HERE
+static void
+handle_syno_set(int hid, int IsAllowListDir)
+{
+	handles[hid].IsAllowListDir = (IsAllowListDir)?TRUE:FALSE;
+}
+static BOOL
+handle_syno_isallow_lsdir(int hid)
+{
+	return handles[hid].IsAllowListDir;
+}
+static char *
+handle_syno_to_virtual_name(int handle)
+{
+	if (handle_is_ok(handle, HANDLE_DIR)||
+	    handle_is_ok(handle, HANDLE_FILE))
+		return handles[handle].szVirtualName;
+	return NULL;
+}
+
+static void handle_syno_free(int i)
+{
+	if (handles[i].szVirtualName) {
+		free(handles[i].szVirtualName);
+		handles[i].szVirtualName = NULL;
+	}
+#ifdef MY_ABC_HERE
+	handles[i].FileSize = 0;
+#endif /* MY_ABC_HERE */
+	handles[i].bytes_read = 0;
+	handles[i].bytes_write = 0;
+	handles[i].IsAllowListDir = FALSE;
+}
+
+static int syno_stat_by_user(char *pszFileName, struct stat *buf, char *pszUserName, uid_t uid, gid_t gid, int do_lstat)
+{
+	int status = -1;
+	uid_t old_uid;
+	old_uid = geteuid();
+
+	if (old_uid != uid) {
+		if (0 > initgroups(pszUserName, gid)) {
+			SLIBCErrSet(ERR_ACCESS_DENIED);
+			goto Err;
+		}
+		if (0 > seteuid(uid)) {
+			SLIBCErrSet(ERR_ACCESS_DENIED);
+			goto Err;
+		}
+	}
+
+	if (do_lstat) {
+		status = lstat(pszFileName, buf);
+	} else {
+		status = stat(pszFileName, buf);
+	}
+Err:
+	if (old_uid != geteuid()) {
+		seteuid(old_uid);
+	}
+	return status;
+}
+#endif /* MY_ABC_HERE */
 static int
 handle_to_string(int handle, u_char **stringp, int *hlenp)
 {
@@ -393,7 +495,13 @@ handle_to_flags(int handle)
 static void
 handle_update_read(int handle, ssize_t bytes)
 {
+#ifdef MY_ABC_HERE
+	if ((handle_is_ok(handle, HANDLE_FILE) || 
+		 handle_is_ok(handle, HANDLE_DIR)) &&
+		 bytes > 0)
+#else
 	if (handle_is_ok(handle, HANDLE_FILE) && bytes > 0)
+#endif /* MY_ABC_HERE */
 		handles[handle].bytes_read += bytes;
 }
 
@@ -407,7 +515,12 @@ handle_update_write(int handle, ssize_t bytes)
 static u_int64_t
 handle_bytes_read(int handle)
 {
+#ifdef MY_ABC_HERE
+	if (handle_is_ok(handle, HANDLE_FILE) || 
+		 handle_is_ok(handle, HANDLE_DIR))
+#else
 	if (handle_is_ok(handle, HANDLE_FILE))
+#endif /* MY_ABC_HERE */
 		return (handles[handle].bytes_read);
 	return 0;
 }
@@ -420,6 +533,15 @@ handle_bytes_write(int handle)
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+static size_t
+handle_file_size(int handle)
+{
+	if (handle_is_ok(handle, HANDLE_FILE))
+		return (handles[handle].FileSize);
+	return 0;
+}
+#endif /* MY_ABC_HERE */
 static int
 handle_close(int handle)
 {
@@ -428,10 +550,25 @@ handle_close(int handle)
 	if (handle_is_ok(handle, HANDLE_FILE)) {
 		ret = close(handles[handle].fd);
 		free(handles[handle].name);
+#ifdef MY_ABC_HERE
+		handle_syno_free(handle);
+#endif /* MY_ABC_HERE */
 		handle_unused(handle);
 	} else if (handle_is_ok(handle, HANDLE_DIR)) {
+#ifdef MY_ABC_HERE
+		if (NULL != handles[handle].dirp) {
+			ret = closedir(handles[handle].dirp);
+		}
+		else {
+			ret = 0;
+		}
+#else
 		ret = closedir(handles[handle].dirp);
+#endif /* MY_ABC_HERE */
 		free(handles[handle].name);
+#ifdef MY_ABC_HERE
+		handle_syno_free(handle);
+#endif /* MY_ABC_HERE */
 		handle_unused(handle);
 	} else {
 		errno = ENOENT;
@@ -480,6 +617,81 @@ get_handle(struct sshbuf *queue, int *hp)
 	free(handle);
 	return 0;
 }
+#ifdef MY_ABC_HERE
+static int SYNOSftpShareEnum(int handle, int maxRead, Stat **ppStats, int nstats)
+{
+#ifndef MY_ABC_HERE
+	return 0;
+#else
+	int cReadAlready = 0;
+	int cThisTurn = 0;
+	int cAllow = 0;
+	struct stat st;
+	SYNOSftpShareInfo *pShare = NULL;
+	Stat *pStats = NULL;
+
+	cReadAlready = handle_bytes_read(handle);
+
+	//Start to read
+	cThisTurn = 0;
+	pStats = *ppStats;
+
+	pShare = FIRST_SHARE(gConf);
+	EACH_SHARE(pShare) {
+#ifdef MY_ABC_HERE
+		if (pShare->blOnlyACL && SHARE_RW != SLIBShareUserACLPrivGet(gConf.user.szName, pShare->path)) {
+			continue;
+		}
+#endif
+		if (maxRead <= cThisTurn) {
+			break;
+		}
+		if (cThisTurn >= nstats) {
+			nstats *= 2;
+			*ppStats = xreallocarray(*ppStats, nstats, sizeof(Stat));
+			if (!*ppStats) {
+				continue;
+			}
+			pStats = *ppStats;
+		}
+
+		cAllow++;
+		if (cReadAlready >= cAllow) {//Already read at last readdir().
+			continue;
+		}
+
+		if (0 > syno_stat_by_user(pShare->path, &st, gConf.user.szName, gConf.user.uid, gConf.user.gid, 1)) {
+			SYSLOG(LOG_ERR, "Failed to lstat [%s]. errno=%m(%d)" SLIBERR_FMT, pShare->path, errno, SLIBERR_ARGS);
+			continue;
+		}
+		stat_to_attrib(&st, &(pStats[cThisTurn].attrib));
+		pStats[cThisTurn].name = xstrdup(pShare->share);
+		pStats[cThisTurn].long_name = ls_file(pShare->share, &st, 0, 0);
+		cThisTurn++;
+	}
+
+	handle_update_read(handle, cThisTurn);
+
+	return (int)cThisTurn;
+#endif //MY_ABC_HERE
+}
+
+static char * ToAbsolutePath(const char *szPath, Stat *pSt)
+{
+	char *szAbsPath = NULL;
+
+	if (NULL == (szAbsPath = SYNOSftpPathRemoveDot(szPath))){
+		return NULL;
+	}
+	if (pSt) {
+		attrib_clear(&pSt->attrib);
+		pSt->name = pSt->long_name = szAbsPath;
+	}
+
+	return szAbsPath;
+}
+
+#endif /* MY_ABC_HERE */
 
 /* send replies */
 
@@ -589,6 +801,10 @@ send_names(u_int32_t id, int count, const Stat *stats)
 		    (r = sshbuf_put_cstring(msg, stats[i].long_name)) != 0 ||
 		    (r = encode_attrib(msg, &stats[i].attrib)) != 0)
 			fatal("%s: buffer error: %s", __func__, ssh_err(r));
+#ifdef SYNO_SFTP_DEBUG_LOG
+		debug3("request %u: return NAME: name[%s] long_name[%s]"
+			  , id, stats[i].name, stats[i].long_name);
+#endif /* SYNO_SFTP_DEBUG_LOG */
 	}
 	send_msg(msg);
 	sshbuf_free(msg);
@@ -685,7 +901,12 @@ process_open(u_int32_t id)
 	Attrib a;
 	char *name;
 	int r, handle, fd, flags, mode, status = SSH2_FX_FAILURE;
-
+#ifdef MY_ABC_HERE
+	char *szVirtualName = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+	BOOL IsFileExist = TRUE;
+#endif /* MY_ABC_HERE */
 	if ((r = sshbuf_get_cstring(iqueue, &name, NULL)) != 0 ||
 	    (r = sshbuf_get_u32(iqueue, &pflags)) != 0 || /* portable flags */
 	    (r = decode_attrib(iqueue, &a)) != 0)
@@ -694,6 +915,22 @@ process_open(u_int32_t id)
 	debug3("request %u: open flags %d", id, pflags);
 	flags = flags_from_portable(pflags);
 	mode = (a.flags & SSH2_FILEXFER_ATTR_PERMISSIONS) ? a.perm : 0666;
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = name;
+	tIn.mode = mode;
+	tIn.flag = flags;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_OPEN, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualName = name;
+	name = tOut.szRealPath;
+	mode = tOut.mode;
+	IsFileExist = tOut.isFileExist;
+#endif /* MY_ABC_HERE */
 	logit("open \"%s\" flags %s mode 0%o",
 	    name, string_from_portable(pflags), mode);
 	if (readonly &&
@@ -706,7 +943,14 @@ process_open(u_int32_t id)
 		if (fd == -1) {
 			status = errno_to_portable(errno);
 		} else {
+#ifdef MY_ABC_HERE
+			tIn.isFileExist = IsFileExist;
+			tIn.fd = fd;
+			SYNOSftpTrigger(SFTP_EVENT_AFTER_OPEN, &tIn, NULL);
+			handle = handle_new(HANDLE_FILE, name, szVirtualName, fd, flags, NULL);
+#else
 			handle = handle_new(HANDLE_FILE, name, fd, flags, NULL);
+#endif /* MY_ABC_HERE */
 			if (handle < 0) {
 				close(fd);
 			} else {
@@ -715,6 +959,12 @@ process_open(u_int32_t id)
 			}
 		}
 	}
+#ifdef MY_ABC_HERE
+Err:
+	if (szVirtualName) {
+		free(szVirtualName);
+	}
+#endif /* MY_ABC_HERE */
 	if (status != SSH2_FX_OK)
 		send_status(id, status);
 	free(name);
@@ -724,11 +974,28 @@ static void
 process_close(u_int32_t id)
 {
 	int r, handle, ret, status = SSH2_FX_FAILURE;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = get_handle(iqueue, &handle)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
 	debug3("request %u: close handle %u", id, handle);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.fd = handle_to_fd(handle);
+	tIn.clientAddr = client_addr;
+	tIn.pConf = &gConf;
+	tIn.szPath = handle_syno_to_virtual_name(handle);
+	tIn.szPathNew = handle_to_name(handle);
+	tIn.fH.isFile = handle_is_ok(handle, HANDLE_FILE);
+	tIn.fH.ullReadBytes = handle_bytes_read(handle);
+	tIn.fH.ullWriteBytes = handle_bytes_write(handle);
+	SYNOSftpTrigger(SFTP_EVENT_AFTER_CLOSE, &tIn, &tOut);
+#endif /* MY_ABC_HERE */
 	handle_log_close(handle, NULL);
 	ret = handle_close(handle);
 	status = (ret == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
@@ -748,6 +1015,10 @@ process_read(u_int32_t id)
 	    (r = sshbuf_get_u32(iqueue, &len)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
+#ifdef MY_ABC_HERE
+	size_t FileSize = handle_file_size(handle);
+	u_int64_t transferred = handle_bytes_read(handle);
+#endif /* MY_ABC_HERE */
 	debug("request %u: read \"%s\" (handle %d) off %llu len %d",
 	    id, handle_to_name(handle), handle, (unsigned long long)off, len);
 	if (len > sizeof buf) {
@@ -769,6 +1040,20 @@ process_read(u_int32_t id)
 				send_data(id, buf, ret);
 				status = SSH2_FX_OK;
 				handle_update_read(handle, ret);
+#ifdef MY_ABC_HERE
+				// Start managing bandwidth control
+				if (0 < FileSize) {
+					if (0 > SYNOBandwidthSleepInLoop(&gConf.BWconfig, ret, (size_t)(transferred * 10000.0 / FileSize), &gConf.BWCurrTime, &gConf.bwStatus)) {
+						SYSLOG(LOG_ERR, "Connection was closed. uid:[%u] file:[%s] "SLIBERR_FMT, gConf.bwStatus.id, gConf.bwStatus.szFileName, SLIBERR_ARGS);
+						status = SSH2_FX_FAILURE;
+					}
+				} else {
+					if (0 > SYNOBandwidthSleepInLoop(&gConf.BWconfig, ret, 0, &gConf.BWCurrTime, &gConf.bwStatus)) {
+						SYSLOG(LOG_ERR, "Connection was closed. uid:[%u] file:[%s] "SLIBERR_FMT, gConf.bwStatus.id, gConf.bwStatus.szFileName, SLIBERR_ARGS);
+						status = SSH2_FX_FAILURE;
+					}
+				}
+#endif /* MY_ABC_HERE */
 			}
 		}
 	}
@@ -809,6 +1094,13 @@ process_write(u_int32_t id)
 			} else if ((size_t)ret == len) {
 				status = SSH2_FX_OK;
 				handle_update_write(handle, ret);
+#ifdef MY_ABC_HERE
+				// Start managing bandwidth control
+				if (0 > SYNOBandwidthSleepInLoop(&gConf.BWconfig, ret, 0, &gConf.BWCurrTime, &gConf.bwStatus)) {
+					SYSLOG(LOG_ERR, "Connection was closed. uid:[%u] file:[%s] "SLIBERR_FMT, gConf.bwStatus.id, gConf.bwStatus.szFileName, SLIBERR_ARGS);
+					status = SSH2_FX_FAILURE;
+				}
+#endif /* MY_ABC_HERE */
 			} else {
 				debug2("nothing at all written");
 				status = SSH2_FX_FAILURE;
@@ -825,6 +1117,10 @@ process_do_stat(u_int32_t id, int do_lstat)
 	Attrib a;
 	struct stat st;
 	char *name;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 	int r, status = SSH2_FX_FAILURE;
 
 	if ((r = sshbuf_get_cstring(iqueue, &name, NULL)) != 0)
@@ -832,7 +1128,31 @@ process_do_stat(u_int32_t id, int do_lstat)
 
 	debug3("request %u: %sstat", id, do_lstat ? "l" : "");
 	verbose("%sstat name \"%s\"", do_lstat ? "l" : "", name);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = name;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_STAT, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		if (SSH2_FX_OK == status) {
+			attrib_clear(&a);
+			a.flags = SSH2_FILEXFER_ATTR_UIDGID | SSH2_FILEXFER_ATTR_PERMISSIONS;
+			a.uid = UID_ROOT;
+			a.gid = GID_ROOT;
+			a.perm = S_IFDIR | S_IRUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH;			
+			send_attrib(id, &a);
+		}
+		goto Err;
+	}
+	free(name);
+	name = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	r = syno_stat_by_user(name, &st, gConf.user.szName, gConf.user.uid, gConf.user.gid, do_lstat);
+#else
 	r = do_lstat ? lstat(name, &st) : stat(name, &st);
+#endif /* MY_ABC_HERE */
 	if (r == -1) {
 		status = errno_to_portable(errno);
 	} else {
@@ -840,6 +1160,9 @@ process_do_stat(u_int32_t id, int do_lstat)
 		send_attrib(id, &a);
 		status = SSH2_FX_OK;
 	}
+#ifdef MY_ABC_HERE
+Err:
+#endif /* MY_ABC_HERE */
 	if (status != SSH2_FX_OK)
 		send_status(id, status);
 	free(name);
@@ -913,24 +1236,54 @@ process_setstat(u_int32_t id)
 	Attrib a;
 	char *name;
 	int r, status = SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+	char *szVirtualPath = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &name, NULL)) != 0 ||
 	    (r = decode_attrib(iqueue, &a)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
 	debug("request %u: setstat name \"%s\"", id, name);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = name;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_SETSTAT, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualPath = name;
+	name = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
 	if (a.flags & SSH2_FILEXFER_ATTR_SIZE) {
 		logit("set \"%s\" size %llu",
 		    name, (unsigned long long)a.size);
 		r = truncate(name, a.size);
 		if (r == -1)
 			status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+		else 
+			tIn.setstRet |= SFTP_TRUNCATE;
+#endif /* MY_ABC_HERE */
 	}
 	if (a.flags & SSH2_FILEXFER_ATTR_PERMISSIONS) {
 		logit("set \"%s\" mode %04o", name, a.perm);
+#if defined(MY_ABC_HERE) && defined(MY_ABC_HERE)
+		if (tOut.pShare && tOut.pShare->blOnlyACL && !(gConf.blDefaultUnixPermission)) {
+			r = SYNOFSAclChmod(name, -1, a.perm & 07777);
+		} else
+#endif /* defined(MY_ABC_HERE) && defined(MY_ABC_HERE) */
 		r = chmod(name, a.perm & 07777);
 		if (r == -1)
 			status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+		else 
+			tIn.setstRet |= SFTP_CHMOD;
+#endif /* MY_ABC_HERE */
 	}
 	if (a.flags & SSH2_FILEXFER_ATTR_ACMODTIME) {
 		char buf[64];
@@ -942,6 +1295,10 @@ process_setstat(u_int32_t id)
 		r = utimes(name, attrib_to_tv(&a));
 		if (r == -1)
 			status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+		else 
+			tIn.setstRet |= SFTP_MODTIME;
+#endif /* MY_ABC_HERE */
 	}
 	if (a.flags & SSH2_FILEXFER_ATTR_UIDGID) {
 		logit("set \"%s\" owner %lu group %lu", name,
@@ -949,7 +1306,18 @@ process_setstat(u_int32_t id)
 		r = chown(name, a.uid, a.gid);
 		if (r == -1)
 			status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+		else 
+			tIn.setstRet |= SFTP_CHOWN;
+#endif /* MY_ABC_HERE */
 	}
+#ifdef MY_ABC_HERE
+Err:
+	tIn.szPath = name;
+	SYNOSftpTrigger(SFTP_EVENT_AFTER_SETSTAT, &tIn, NULL);
+
+	if (szVirtualPath) free(szVirtualPath);
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(name);
 }
@@ -960,6 +1328,10 @@ process_fsetstat(u_int32_t id)
 	Attrib a;
 	int handle, fd, r;
 	int status = SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = get_handle(iqueue, &handle)) != 0 ||
 	    (r = decode_attrib(iqueue, &a)) != 0)
@@ -970,7 +1342,20 @@ process_fsetstat(u_int32_t id)
 	if (fd < 0)
 		status = SSH2_FX_FAILURE;
 	else {
+#ifndef MY_ABC_HERE
 		char *name = handle_to_name(handle);
+#else
+		char *name = handle_syno_to_virtual_name(handle);
+		BZERO_STRUCT(tIn);
+		BZERO_STRUCT(tOut);
+		tIn.pConf = &gConf;
+		tIn.szPath = name;
+		if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_SETSTAT, &tIn, &tOut)){
+			status = SYNOSftpErrGetBy(tOut.err);
+			goto Err;
+		}
+		name = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
 
 		if (a.flags & SSH2_FILEXFER_ATTR_SIZE) {
 			logit("set \"%s\" size %llu",
@@ -978,9 +1363,18 @@ process_fsetstat(u_int32_t id)
 			r = ftruncate(fd, a.size);
 			if (r == -1)
 				status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+			else 
+				tIn.setstRet |= SFTP_TRUNCATE;
+#endif /* MY_ABC_HERE */
 		}
 		if (a.flags & SSH2_FILEXFER_ATTR_PERMISSIONS) {
 			logit("set \"%s\" mode %04o", name, a.perm);
+#if defined(MY_ABC_HERE) && defined(MY_ABC_HERE)
+			if (tOut.pShare && tOut.pShare->blOnlyACL && !(gConf.blDefaultUnixPermission)) {
+				r = SYNOFSAclChmod(name, -1, a.perm & 07777);
+			} else
+#endif /* defined(MY_ABC_HERE) && defined(MY_ABC_HERE) */
 #ifdef HAVE_FCHMOD
 			r = fchmod(fd, a.perm & 07777);
 #else
@@ -988,6 +1382,10 @@ process_fsetstat(u_int32_t id)
 #endif
 			if (r == -1)
 				status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+			else 
+				tIn.setstRet |= SFTP_CHMOD;
+#endif /* MY_ABC_HERE */
 		}
 		if (a.flags & SSH2_FILEXFER_ATTR_ACMODTIME) {
 			char buf[64];
@@ -1003,6 +1401,10 @@ process_fsetstat(u_int32_t id)
 #endif
 			if (r == -1)
 				status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+			else 
+				tIn.setstRet |= SFTP_MODTIME;
+#endif /* MY_ABC_HERE */
 		}
 		if (a.flags & SSH2_FILEXFER_ATTR_UIDGID) {
 			logit("set \"%s\" owner %lu group %lu", name,
@@ -1014,8 +1416,19 @@ process_fsetstat(u_int32_t id)
 #endif
 			if (r == -1)
 				status = errno_to_portable(errno);
+#ifdef MY_ABC_HERE
+			else 
+				tIn.setstRet |= SFTP_CHOWN;
+#endif /* MY_ABC_HERE */
 		}
+#ifdef MY_ABC_HERE
+		tIn.szPath = name;
+		SYNOSftpTrigger(SFTP_EVENT_AFTER_SETSTAT, &tIn, NULL);
+#endif /* MY_ABC_HERE */
 	}
+#ifdef MY_ABC_HERE
+Err:
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 }
 
@@ -1025,25 +1438,79 @@ process_opendir(u_int32_t id)
 	DIR *dirp = NULL;
 	char *path;
 	int r, handle, status = SSH2_FX_FAILURE;
+#ifdef MY_ABC_HERE
+	SYNO_PATH_TYPE pathType = SFTP_PATH_ERR;
+	char *szVirtualPath = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+	SYNOSftpPerm *pPerm = NULL;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &path, NULL)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
 	debug3("request %u: opendir", id);
 	logit("opendir \"%s\"", path);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = path;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_OPENDIR, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	pathType = tOut.pathType;
+	pPerm = tOut.pPerm;
+
+	tIn.pPerm = pPerm;
+	tIn.clientAddr = client_addr;
+	tIn.pathType = pathType;
+
+	if (SFTP_PATH_ROOT == pathType) {
+		handle = handle_new(HANDLE_DIR, SZF_ENUM_SHARE_ROOT_PATH, SZF_ENUM_SHARE_ROOT_PATH, -1, 0, NULL);
+		if (handle >= 0){
+			send_handle(id, handle);
+			status = SSH2_FX_OK;
+
+			SYNOSftpTrigger(SFTP_EVENT_AFTER_OPENDIR, &tIn, NULL);
+		}
+	} else {//share path or subfolder path
+		szVirtualPath = path;
+		path = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
 	dirp = opendir(path);
 	if (dirp == NULL) {
 		status = errno_to_portable(errno);
 	} else {
+#ifdef MY_ABC_HERE
+		handle = handle_new(HANDLE_DIR, path, szVirtualPath, 0, 0, dirp);
+#else
 		handle = handle_new(HANDLE_DIR, path, 0, 0, dirp);
+#endif /* MY_ABC_HERE */
 		if (handle < 0) {
 			closedir(dirp);
 		} else {
+#ifdef MY_ABC_HERE
+			SYNOSftpTrigger(SFTP_EVENT_AFTER_OPENDIR, &tIn, NULL);
+#ifdef MY_ABC_HERE
+			if (pPerm) {
+				handle_syno_set(handle, IS_PERM_LISTDIR(pPerm) && IS_PERM_READ(pPerm));
+			}
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 			send_handle(id, handle);
 			status = SSH2_FX_OK;
 		}
 
 	}
+#ifdef MY_ABC_HERE
+	}
+Err:
+	if (szVirtualPath) {
+		free(szVirtualPath);
+	}
+#endif /* MY_ABC_HERE */
 	if (status != SSH2_FX_OK)
 		send_status(id, status);
 	free(path);
@@ -1056,6 +1523,9 @@ process_readdir(u_int32_t id)
 	struct dirent *dp;
 	char *path;
 	int r, handle;
+#ifdef MY_ABC_HERE
+	BOOL isEnumShare = FALSE;
+#endif /* MY_ABC_HERE */
 
 	if ((r = get_handle(iqueue, &handle)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
@@ -1064,8 +1534,21 @@ process_readdir(u_int32_t id)
 	    handle_to_name(handle), handle);
 	dirp = handle_to_dir(handle);
 	path = handle_to_name(handle);
+#ifdef MY_ABC_HERE
+	if (!path) {
+		SYSLOG(LOG_ERR, "path name is not found");
+		send_status(id, SSH2_FX_FAILURE);
+		return;
+	} else if (IS_ENUM_SHARE_PATH(path)) {
+		isEnumShare = TRUE;
+	}
+	//Pseudo path don't care if dirp is NULL
+	if (!isEnumShare && (NULL == dirp || NULL == path)) {
+		send_status(id, SSH2_FX_FAILURE);
+#else
 	if (dirp == NULL || path == NULL) {
 		send_status(id, SSH2_FX_FAILURE);
+#endif /* MY_ABC_HERE */
 	} else {
 		struct stat st;
 		char pathname[PATH_MAX];
@@ -1073,6 +1556,12 @@ process_readdir(u_int32_t id)
 		int nstats = 10, count = 0, i;
 
 		stats = xcalloc(nstats, sizeof(Stat));
+#ifdef MY_ABC_HERE
+		if (isEnumShare) {
+			count = SYNOSftpShareEnum(handle, MAX_SHARE_ENUM_ONE_TIME, &stats, nstats);
+		} 
+		else if (handle_syno_isallow_lsdir(handle)) {
+#endif /* MY_ABC_HERE */
 		while ((dp = readdir(dirp)) != NULL) {
 			if (count >= nstats) {
 				nstats *= 2;
@@ -1083,15 +1572,27 @@ process_readdir(u_int32_t id)
 			    strcmp(path, "/") ? "/" : "", dp->d_name);
 			if (lstat(pathname, &st) == -1)
 				continue;
+#ifdef MY_ABC_HERE
+			if (!SYNOSftpIsVisiblePath(S_ISDIR(st.st_mode), dp->d_name)) {   
+				continue;
+			}
+#endif /* MY_ABC_HERE */
 			stat_to_attrib(&st, &(stats[count].attrib));
 			stats[count].name = xstrdup(dp->d_name);
 			stats[count].long_name = ls_file(dp->d_name, &st, 0, 0);
 			count++;
 			/* send up to 100 entries in one message */
 			/* XXX check packet size instead */
+#ifdef MY_ABC_HERE
+			if (count == MAX_SHARE_ENUM_ONE_TIME)
+#else
 			if (count == 100)
+#endif /* MY_ABC_HERE */
 				break;
 		}
+#ifdef MY_ABC_HERE
+		}
+#endif /* MY_ABC_HERE */
 		if (count > 0) {
 			send_names(id, count, stats);
 			for (i = 0; i < count; i++) {
@@ -1110,14 +1611,89 @@ process_remove(u_int32_t id)
 {
 	char *name;
 	int r, status = SSH2_FX_FAILURE;
+#ifdef MY_ABC_HERE
+	off_t size = 0;
+	char *szVirtualPath = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	char *szRelativePath = NULL;
+	char *szTmp = NULL;
+	SYNOSftpShareInfo *pShare = NULL;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &name, NULL)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
 	debug3("request %u: remove", id);
 	logit("remove name \"%s\"", name);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = name;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_REMOVE, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualPath = name;
+	name = tOut.szRealPath;
+	size = tOut.size;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (FALSE == IS_CHROOT(&(tIn.pConf->user))) {
+		pShare = tOut.pShare; // Don't free it, share name from gConf.shares
+		if (!pShare) {
+			SYSLOG(LOG_ERR, "Share is NULL.");
+			status = SSH2_FX_FAILURE;
+			goto Err;
+		}
+		if (FALSE == pShare->enableRecycleBin) {
+			r = unlink(name);
+			status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+		} else {
+			szTmp = strdup(szVirtualPath);
+			szRelativePath = szTmp + ((szTmp[0] == '/') ? 1 : 0) + strlen(pShare->share) + 1;
+			status = SSH2_FX_OK;
+			if (0 > SYNORecycleUnlinkFileWithSharePath(pShare->path, szRelativePath, FALSE, pShare->blRecycleBinAdminOnly)) {
+				SYSLOG(LOG_ERR, "SYNORecycleUnlinkFileWithSharePath failed. share_path:[%s] rpath:[%s] "SLIBERR_FMT, pShare->path, szRelativePath, SLIBERR_ARGS);
+				status = errno_to_portable(errno);
+			}
+			free(szTmp);
+		}
+	} else {
+		if (FALSE == tIn.pConf->user.chroot.blRecycleBin) {
+			r = unlink(name);
+			status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+		} else {
+			szTmp = strdup(szVirtualPath);
+			szRelativePath = szTmp + ((szTmp[0] == '/') ? 1 : 0);
+			status = SSH2_FX_OK;
+			if (0 > SYNORecycleUnlinkFileWithSharePath(tIn.pConf->user.chroot.szHomePath, szRelativePath, FALSE, tIn.pConf->user.chroot.blRecycleBinAdminOnly)) {
+				SYSLOG(LOG_ERR, "SYNORecycleUnlinkFileWithSharePath failed. share_path:[%s] rpath:[%s] "SLIBERR_FMT, CHROOT_HOME_PATH, szRelativePath, SLIBERR_ARGS);
+				status = errno_to_portable(errno);
+			}
+			free(szTmp);
+		}
+	}
+#else
 	r = unlink(name);
 	status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (SSH2_FX_OK == status) {
+		tIn.szPath = szVirtualPath;
+		tIn.szPathNew = name;
+		tIn.clientAddr = client_addr;
+		tIn.size = size;
+		SYNOSftpTrigger(SFTP_EVENT_AFTER_REMOVE, &tIn, &tOut);
+	}
+Err:
+	if (szVirtualPath) {
+		free(szVirtualPath);
+	}
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(name);
 }
@@ -1128,6 +1704,11 @@ process_mkdir(u_int32_t id)
 	Attrib a;
 	char *name;
 	int r, mode, status = SSH2_FX_FAILURE;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+	char *szVirtualPath = NULL;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &name, NULL)) != 0 ||
 	    (r = decode_attrib(iqueue, &a)) != 0)
@@ -1135,10 +1716,36 @@ process_mkdir(u_int32_t id)
 
 	mode = (a.flags & SSH2_FILEXFER_ATTR_PERMISSIONS) ?
 	    a.perm & 07777 : 0777;
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = name;
+	tIn.mode = mode;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_MKDIR, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualPath = name;
+	name = tOut.szRealPath;
+	mode = tOut.mode;
+#endif /* MY_ABC_HERE */
 	debug3("request %u: mkdir", id);
 	logit("mkdir name \"%s\" mode 0%o", name, mode);
 	r = mkdir(name, mode);
 	status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+	if (SSH2_FX_OK == status) {
+		tIn.szPath = szVirtualPath;
+		tIn.szPathNew = name;
+		tIn.clientAddr = client_addr;
+		SYNOSftpTrigger(SFTP_EVENT_AFTER_MKDIR, &tIn, &tOut);
+	}
+Err:
+	if (szVirtualPath) {
+		free(szVirtualPath);
+	}
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(name);
 }
@@ -1148,14 +1755,43 @@ process_rmdir(u_int32_t id)
 {
 	char *name;
 	int r, status;
+#ifdef MY_ABC_HERE
+	char *szVirtualPath = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &name, NULL)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 
 	debug3("request %u: rmdir", id);
 	logit("rmdir name \"%s\"", name);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = name;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_RMDIR, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualPath = name;
+	name = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
 	r = rmdir(name);
 	status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+Err:
+	if (SSH2_FX_OK == status) {
+		tIn.szPath = szVirtualPath;
+		tIn.szPathNew = name;
+		tIn.clientAddr = client_addr;
+		SYNOSftpTrigger(SFTP_EVENT_AFTER_RMDIR, &tIn, &tOut);
+	}
+	if (szVirtualPath) {
+		free(szVirtualPath);
+	}
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(name);
 }
@@ -1176,6 +1812,21 @@ process_realpath(u_int32_t id)
 	}
 	debug3("request %u: realpath", id);
 	verbose("realpath \"%s\"", path);
+#ifdef MY_ABC_HERE
+	{
+		Stat s;
+		char *szAbsPath = NULL;
+
+		szAbsPath = ToAbsolutePath(path, &s);
+		if (!szAbsPath){
+			send_status(id, SSH2_FX_FAILURE);
+		} else {
+			send_names(id, 1, &s);
+			free(szAbsPath);
+		}
+		goto Err;
+	}
+#endif /* MY_ABC_HERE */
 	if (sftp_realpath(path, resolvedname) == NULL) {
 		send_status(id, errno_to_portable(errno));
 	} else {
@@ -1184,6 +1835,9 @@ process_realpath(u_int32_t id)
 		s.name = s.long_name = resolvedname;
 		send_names(id, 1, &s);
 	}
+#ifdef MY_ABC_HERE
+Err:
+#endif /* MY_ABC_HERE */
 	free(path);
 }
 
@@ -1193,6 +1847,12 @@ process_rename(u_int32_t id)
 	char *oldpath, *newpath;
 	int r, status;
 	struct stat sb;
+#ifdef MY_ABC_HERE
+	char *szVirtualOldPath = NULL;
+	char *szVirtualNewPath = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &oldpath, NULL)) != 0 ||
 	    (r = sshbuf_get_cstring(iqueue, &newpath, NULL)) != 0)
@@ -1201,6 +1861,21 @@ process_rename(u_int32_t id)
 	debug3("request %u: rename", id);
 	logit("rename old \"%s\" new \"%s\"", oldpath, newpath);
 	status = SSH2_FX_FAILURE;
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = oldpath;
+	tIn.szPathNew = newpath;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_RENAME, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualOldPath = oldpath;
+	szVirtualNewPath = newpath;
+	oldpath = tOut.szRealPath;
+	newpath = tOut.szRealPathNew;
+#endif /* MY_ABC_HERE */
 	if (lstat(oldpath, &sb) == -1)
 		status = errno_to_portable(errno);
 	else if (S_ISREG(sb.st_mode)) {
@@ -1242,6 +1917,38 @@ process_rename(u_int32_t id)
 		else
 			status = SSH2_FX_OK;
 	}
+#ifdef MY_ABC_HERE
+	if (SSH2_FX_OK == status) {
+		tIn.szPath = oldpath;
+		tIn.szPathNew = newpath;
+		SYNOSftpTrigger(SFTP_EVENT_AFTER_RENAME, &tIn, NULL);
+#ifdef MY_ABC_HERE
+		if (gConf.sftp.isXferLogEnable) {
+			char szSrcDst[PATH_MAX * 2 + 8] = "";
+			if (0 > lstat(newpath, &sb)) {
+				SYSLOG(LOG_ERR, "Failed to lstat(). (%s) %m", newpath);
+			}
+			if (IS_CHROOT(&gConf.user)) {
+				snprintf(szSrcDst, sizeof(szSrcDst), "/%s%s -> /%s%s",
+						gConf.user.chroot.szHomeShare, szVirtualOldPath, gConf.user.chroot.szHomeShare, szVirtualNewPath);
+			} else {
+				snprintf(szSrcDst, sizeof(szSrcDst), "%s -> %s", szVirtualOldPath, szVirtualNewPath);
+			}
+			if (0 > SYNOLogFTPXferLog(client_addr, gConf.user.szName, "move", sb.st_size, szSrcDst, S_ISDIR(sb.st_mode) ? 1 : 0, 0)) {
+				SYSLOG(LOG_ERR, "Failed to SYNOLogFTPXferLog(). (%s,%s,%s,%s)"SLIBERR_FMT, client_addr, gConf.user.szName, "move", szSrcDst, SLIBERR_ARGS);
+			}
+		}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		if (gConf.blXferSysLog) {
+			SYNOSftpXferSysLog(client_addr, gConf.user.szName, "rename \"%s\" to \"%s\"", szVirtualOldPath, szVirtualNewPath);
+		}
+#endif /* MY_ABC_HERE */
+	}
+Err:
+	if (szVirtualOldPath) free(szVirtualOldPath);
+	if (szVirtualNewPath) free(szVirtualNewPath);
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(oldpath);
 	free(newpath);
@@ -1277,6 +1984,10 @@ process_symlink(u_int32_t id)
 {
 	char *oldpath, *newpath;
 	int r, status;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &oldpath, NULL)) != 0 ||
 	    (r = sshbuf_get_cstring(iqueue, &newpath, NULL)) != 0)
@@ -1284,9 +1995,24 @@ process_symlink(u_int32_t id)
 
 	debug3("request %u: symlink", id);
 	logit("symlink old \"%s\" new \"%s\"", oldpath, newpath);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = newpath;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_SYMLINK, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	free(newpath);
+	newpath = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
 	/* this will fail if 'newpath' exists */
 	r = symlink(oldpath, newpath);
 	status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+Err:
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(oldpath);
 	free(newpath);
@@ -1297,6 +2023,12 @@ process_extended_posix_rename(u_int32_t id)
 {
 	char *oldpath, *newpath;
 	int r, status;
+#ifdef MY_ABC_HERE
+	char *szVirtualOldPath = NULL;
+	char *szVirtualNewPath = NULL;
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &oldpath, NULL)) != 0 ||
 	    (r = sshbuf_get_cstring(iqueue, &newpath, NULL)) != 0)
@@ -1304,8 +2036,33 @@ process_extended_posix_rename(u_int32_t id)
 
 	debug3("request %u: posix-rename", id);
 	logit("posix-rename old \"%s\" new \"%s\"", oldpath, newpath);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = oldpath;
+	tIn.szPathNew = newpath;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_RENAME, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	szVirtualOldPath = oldpath;
+	szVirtualNewPath = newpath;
+	oldpath = tOut.szRealPath;
+	newpath = tOut.szRealPathNew;
+#endif /* MY_ABC_HERE */
 	r = rename(oldpath, newpath);
 	status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+	if (SSH2_FX_OK == status) {
+		tIn.szPath = oldpath;
+		tIn.szPathNew = newpath;
+		SYNOSftpTrigger(SFTP_EVENT_AFTER_RENAME, &tIn, NULL);
+	}
+Err:
+	if (szVirtualOldPath) free(szVirtualOldPath);
+	if (szVirtualNewPath) free(szVirtualNewPath);
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(oldpath);
 	free(newpath);
@@ -1317,16 +2074,34 @@ process_extended_statvfs(u_int32_t id)
 	char *path;
 	struct statvfs st;
 	int r;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &path, NULL)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 	debug3("request %u: statvfs", id);
 	logit("statvfs \"%s\"", path);
 
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = path;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_STATVFS, &tIn, &tOut)){
+		goto Err;
+	}
+	free(path);
+	path = tOut.szRealPath;
+#endif /* MY_ABC_HERE */
 	if (statvfs(path, &st) != 0)
 		send_status(id, errno_to_portable(errno));
 	else
 		send_statvfs(id, &st);
+#ifdef MY_ABC_HERE
+Err:
+#endif /* MY_ABC_HERE */
         free(path);
 }
 
@@ -1355,6 +2130,10 @@ process_extended_hardlink(u_int32_t id)
 {
 	char *oldpath, *newpath;
 	int r, status;
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+#endif /* MY_ABC_HERE */
 
 	if ((r = sshbuf_get_cstring(iqueue, &oldpath, NULL)) != 0 ||
 	    (r = sshbuf_get_cstring(iqueue, &newpath, NULL)) != 0)
@@ -1362,8 +2141,26 @@ process_extended_hardlink(u_int32_t id)
 
 	debug3("request %u: hardlink", id);
 	logit("hardlink old \"%s\" new \"%s\"", oldpath, newpath);
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	tIn.pConf = &gConf;
+	tIn.szPath = oldpath;
+	tIn.szPathNew = newpath;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_HARDLINK, &tIn, &tOut)){
+		status = SYNOSftpErrGetBy(tOut.err);
+		goto Err;
+	}
+	free(oldpath);
+	free(newpath);
+	oldpath = tOut.szRealPath;
+	newpath = tOut.szRealPathNew;
+#endif /* MY_ABC_HERE */
 	r = link(oldpath, newpath);
 	status = (r == -1) ? errno_to_portable(errno) : SSH2_FX_OK;
+#ifdef MY_ABC_HERE
+Err:
+#endif /* MY_ABC_HERE */
 	send_status(id, status);
 	free(oldpath);
 	free(newpath);
@@ -1545,6 +2342,13 @@ sftp_server_cleanup_exit(int i)
 		handle_log_exit();
 		logit("session closed for local user %s from [%s]",
 		    pw->pw_name, client_addr);
+#ifdef MY_ABC_HERE
+		SYNOSftpTriggerInput tIn;
+		BZERO_STRUCT(tIn);
+		tIn.pConf = &gConf;
+		tIn.clientAddr = client_addr;
+		SYNOSftpTrigger(SFTP_EVENT_BEFORE_SFTP_STOP, &tIn, NULL);
+#endif /* MY_ABC_HERE */
 	}
 	_exit(i);
 }
@@ -1572,17 +2376,33 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 	SyslogFacility log_facility = SYSLOG_FACILITY_AUTH;
 	char *cp, *homedir = NULL, uidstr[32], buf[4*4096];
 	long mask;
+#ifdef MY_ABC_HERE
+	BOOL blXferSysLog = FALSE;
+#endif
 
 	extern char *optarg;
 	extern char *__progname;
 
+#ifdef MY_ABC_HERE
+	/**
+	 * Get the original umask when the process start, so that
+	 * we can restore it later.
+	 */
+	mode_t defaultUmask = umask(0077);
+	umask(defaultUmask);
+#endif /* MY_ABC_HERE */
 	__progname = ssh_get_progname(argv[0]);
 	log_init(__progname, log_level, log_facility, log_stderr);
 
 	pw = pwcopy(user_pw);
 
+#ifdef MY_ABC_HERE
+	while (!skipargs && (ch = getopt(argc, argv,
+	    "d:f:l:P:p:Q:u:cehRt")) != -1) {
+#else
 	while (!skipargs && (ch = getopt(argc, argv,
 	    "d:f:l:P:p:Q:u:cehR")) != -1) {
+#endif /* MY_ABC_HERE */
 		switch (ch) {
 		case 'Q':
 			if (strcasecmp(optarg, "requests") != 0) {
@@ -1608,6 +2428,11 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 		case 'e':
 			log_stderr = 1;
 			break;
+#ifdef MY_ABC_HERE
+		case 't':
+			blXferSysLog = TRUE;
+			break;
+#endif /* MY_ABC_HERE */
 		case 'l':
 			log_level = log_level_number(optarg);
 			if (log_level == SYSLOG_LEVEL_NOT_SET)
@@ -1674,6 +2499,35 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 	} else
 		client_addr = xstrdup("UNKNOWN");
 
+#ifdef MY_ABC_HERE
+	SYNOSftpTriggerInput tIn;
+	SYNOSftpTriggerOutput tOut;
+
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+	BZERO_STRUCT(gConf);
+#ifdef MY_ABC_HERE
+	gConf.blXferSysLog = blXferSysLog;
+#endif /* MY_ABC_HERE */
+	tIn.pw = user_pw;
+	tIn.pConf = &gConf;
+	tIn.clientAddr = client_addr;
+	if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_SFTP_START, &tIn, &tOut)) {
+		sftp_server_cleanup_exit(255);
+	}
+	user_pw = tOut.pw;
+
+#ifdef MY_ABC_HERE
+	/**
+	 * If the umask setting is enabled, we have to restore the umask
+	 * to the original one.
+	 */
+	if (TRUE == tIn.pConf->blDefaultUnixPermission) {
+		umask(defaultUmask);
+	}
+#endif /* MY_ABC_HERE */
+
+#endif /* MY_ABC_HERE */
 	logit("session opened for local user %s from [%s]",
 	    pw->pw_name, client_addr);
 
@@ -1699,6 +2553,10 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 	rset = xcalloc(howmany(max + 1, NFDBITS), sizeof(fd_mask));
 	wset = xcalloc(howmany(max + 1, NFDBITS), sizeof(fd_mask));
 
+#ifdef MY_ABC_HERE
+	BZERO_STRUCT(tIn);
+	BZERO_STRUCT(tOut);
+#endif /* MY_ABC_HERE */
 	if (homedir != NULL) {
 		if (chdir(homedir) != 0) {
 			error("chdir to \"%s\" failed: %s", homedir,
@@ -1708,6 +2566,13 @@ sftp_server_main(int argc, char **argv, struct passwd *user_pw)
 
 	set_size = howmany(max + 1, NFDBITS) * sizeof(fd_mask);
 	for (;;) {
+#ifdef MY_ABC_HERE
+		tIn.pw = pw;
+		tIn.pConf = &gConf;
+		if (0 > SYNOSftpTrigger(SFTP_EVENT_BEFORE_REQUEST, &tIn, NULL)) {
+			sftp_server_cleanup_exit(255);
+		}
+#endif /* MY_ABC_HERE */
 		memset(rset, 0, set_size);
 		memset(wset, 0, set_size);
 

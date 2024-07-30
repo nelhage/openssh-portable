@@ -286,8 +286,6 @@ static void swap(void *,void *,int,int);
 /* from libpqcrypto-20180314/crypto_kem/sntrup4591761/ref/dec.c */
 /* See https://ntruprime.cr.yp.to/software.html for detailed documentation. */
 
-#ifdef KAT
-#endif
 
 
 int crypto_kem_sntrup4591761_dec(
@@ -352,8 +350,6 @@ int crypto_kem_sntrup4591761_dec(
 /* from libpqcrypto-20180314/crypto_kem/sntrup4591761/ref/enc.c */
 /* See https://ntruprime.cr.yp.to/software.html for detailed documentation. */
 
-#ifdef KAT
-#endif
 
 
 int crypto_kem_sntrup4591761_enc(

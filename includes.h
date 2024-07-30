@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: includes.h,v 1.54 2006/07/22 20:48:23 stevesk Exp $ */
 
 /*
@@ -21,6 +24,9 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE /* activate extra prototypes for glibc */
 #endif
+#ifdef MY_ABC_HERE
+#include "synodef.h"
+#endif /* MY_ABC_HERE */
 
 #include <sys/types.h>
 #include <sys/param.h>

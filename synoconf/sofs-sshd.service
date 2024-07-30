@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenBSD Secure Shell server for SoFS lsyncd
+After=network.target
+
+[Service]
+ExecStartPre=-/usr/lib/systemd/scripts/sshd_checker.sh
+ExecStartPre=/usr/bin/ssh-keygen -A
+ExecStart=/usr/bin/sshd -f /etc/ssh/sofs-sshd_config -D
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+
+[X-Synology]
+Author=File Protocol Team (FPT)
+Name=SSH service for SoFS lsyncd

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: session.c,v 1.318 2020/01/23 07:10:22 dtucker Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -67,6 +70,9 @@
 #include "xmalloc.h"
 #include "ssh.h"
 #include "ssh2.h"
+#ifdef MY_ABC_HERE
+#include <synossh.h>
+#endif
 #include "sshpty.h"
 #include "packet.h"
 #include "sshbuf.h"
@@ -96,10 +102,28 @@
 #include "monitor_wrap.h"
 #include "sftp.h"
 #include "atomicio.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <synosdk/log.h>
+#endif /* MY_ABC_HERE */
 
 #if defined(KRB5) && defined(USE_AFS)
 #include <kafs.h>
 #endif
+#ifdef MY_ABC_HERE
+#include <synosdk/user.h>
+#include <synocore/synoglobal.h>
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <synosystemd/systemd.h>
+#include <synosdk/service.h>
+#include <synosdk/user.h>
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <synosdk/appprivilege.h>
+#endif /* MY_ABC_HERE */
 
 #ifdef WITH_SELINUX
 #include <selinux/selinux.h>
@@ -1071,6 +1095,11 @@ do_setup_env(struct ssh *ssh, Session *s, const char *shell)
 		child_set_env(&env, &envsize, "TERM", s->term);
 	if (s->display)
 		child_set_env(&env, &envsize, "DISPLAY", s->display);
+#ifdef MY_ABC_HERE
+	if (getenv("AUTHDONE")) {
+		child_set_env(&env, &envsize, "AUTHDONE", getenv("AUTHDONE"));
+	}
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * Since we clear KRB5CCNAME at startup, if it's set now then it
@@ -1506,6 +1535,263 @@ child_close_fds(struct ssh *ssh)
 	closefrom(STDERR_FILENO + 1);
 }
 
+#ifdef MY_ABC_HERE
+static int HasNotAllowChar(const char *szCmd)
+{
+	if (!szCmd) {
+		return 1;
+	}
+
+	if (strchr(szCmd, ';') || strchr(szCmd, '|') || strchr(szCmd, '`')) {
+		return 1;
+	}
+
+	return 0;
+}
+
+static int IsRsyncReq(const char *szCmd)
+{
+	if (!szCmd) {
+		return 0;
+	}
+
+	if (!strncmp(szCmd, "rsync", strlen("rsync"))){
+		if (HasNotAllowChar(szCmd)) {
+			return 0;
+		}
+		return 1; //command with rsync but without ';','|','`'
+	}
+
+	return 0;
+}
+
+static int IsSFTPReq(const char *szCmd)
+{
+	if (!szCmd) {
+		return 0;
+	}
+
+	if (IS_INTERNAL_SFTP(szCmd) || strstr(szCmd, "sftp-server")){
+		if (HasNotAllowChar(szCmd)) {
+			return 0;
+		}
+		return 1; 
+	}
+
+	return 0;
+}
+
+static int IsTimebkpRequest(const char *cmd)
+{
+	if (!cmd) {
+		return 0;
+	}
+
+	if (strncmp(cmd, "/usr/syno/timebkp/tools/timebkp-service", strlen("/usr/syno/timebkp/tools/timebkp-service")) == 0 &&
+	    !HasNotAllowChar(cmd)) {
+		return 1;
+	}
+
+	return 0;
+}
+
+#endif //MY_ABC_HERE
+
+#ifdef MY_ABC_HERE
+
+static int IsAllowShell(const struct passwd *pw)
+{
+	int err = -1;
+	char *szUserName = NULL;
+	const char *szShell = NULL;
+	char *pwd_buf = NULL;
+	size_t cbPwdBuf = BUFSIZ;
+	struct passwd pwd = {};
+	struct passwd *pwd_result = NULL;
+
+	if (!pw || !pw->pw_name) {
+		return 0;
+	}
+
+	szUserName = pw->pw_name;
+	if(!strcmp(szUserName, "root") || !strcmp(szUserName, "admin")){
+		return 1;
+	}
+
+	if (NULL == (pwd_buf = malloc(cbPwdBuf))) {
+		goto End;
+	}
+	while (ERANGE == (err = getpwnam_r(szUserName, &pwd, pwd_buf, cbPwdBuf, &pwd_result))) {
+		cbPwdBuf *= 2;
+		if (cbPwdBuf > NSS_BUFFSIZE_LIMIT) {
+			SYSLOG(LOG_ERR, "getpwnam_r failed. [%s]. Too many buffer needed.", szUserName);
+			goto End;
+		}
+		if (NULL == (pwd_buf = realloc(pwd_buf, cbPwdBuf))) {
+			SYSLOG(LOG_ERR, "reallocf fail. %m");
+			goto End;
+		}
+	}
+	if (NULL == pwd_result) {
+		goto End;
+	}
+	szShell = pwd.pw_shell;
+	if (0 == is_allow_directory_service_admin(pw->pw_name)) {
+		szShell = "/bin/sh";
+	}
+	if (!strcmp(szShell, "/bin/sh") ||
+	    !strcmp(szShell, "/bin/ash") ||
+	    !strcmp(szShell, "/var/packages/Git/target/bin/git-shell")) {
+		return 1;
+	}
+
+End:
+	free(pwd_buf);
+	return 0;
+}
+
+static struct passwd * SYNOChgValForRsync(struct passwd *pw)
+{
+	if (pw) {
+		if (SYNOServiceUserHomeIsEnabled(SYNOGetAuthType(pw->pw_name), &pw->pw_uid)) {
+			if (0 > SLIBServiceHomePathCreate(pw->pw_name)) {
+				fprintf(stderr, "Could not create home for '%s'\n", pw->pw_name);
+			}
+		}
+		if (!strcmp(pw->pw_name, "root") || !strcmp(pw->pw_name, "admin")) {
+			//root use default shell setting
+			return pw;
+		}
+		if (pw->pw_shell) {
+			free(pw->pw_shell);
+			pw->pw_shell = xstrdup("/bin/sh");
+		}
+	}
+
+	return pw;
+}
+
+typedef enum SSHCmd {
+	REQ_UNKNOWN = 0,
+	REQ_SHELL,
+	REQ_SFTP,
+	REQ_RSYNC,
+	REQ_TIMEBKP,
+} SSH_CMD;
+
+#ifdef MY_ABC_HERE
+static BOOL IsSftpdEnabled()
+{
+	BOOL blRet = FALSE;
+	SYNO_SFTP_CONFIG conf;
+
+	BZERO_STRUCT(conf);
+
+	if (0 > SYNOSFTPConfigGet(SFTP_CONF_GENERAL, &conf)){
+		return FALSE;
+	}
+
+	blRet = conf.isEnable;
+	SYNOSFTPConfigFree(&conf);
+
+	return blRet;
+}
+
+static BOOL IsSftpPortMatched(struct ssh *ssh)
+{
+	BOOL blRet = FALSE;
+	SYNO_SFTP_CONFIG conf;
+
+	BZERO_STRUCT(conf);
+
+	if (0 > SYNOSFTPConfigGet(SFTP_CONF_GENERAL, &conf)) {
+		goto End;
+	}
+
+	if ((int) conf.port != ssh_local_port(ssh)) {
+		goto End;
+	}
+
+	blRet = TRUE;
+End:
+	return blRet;
+}
+#endif /* MY_ABC_HERE */
+
+static BOOL SSHCanLogin(SSH_CMD cmd, struct ssh *ssh, struct passwd * pw)
+{
+	unsigned int iPort = 0;
+	BOOL blRet = FALSE;
+
+#ifdef SYNO_SOFS_LSYNCD
+	// only allow using rsync for sofs sshd
+	if (options.syno_sofs_lsyncd == 1) {
+		// also allow shell command for debugging
+		if (REQ_RSYNC != cmd && REQ_SHELL != cmd) {
+			goto Err;
+		}
+		if (SOFS_DEF_RSYNC_SSHD_PORT != ssh_local_port(ssh)) {
+			goto Err;
+		}
+		blRet = true;
+		goto Err;
+	}
+#endif /* SYNO_SOFS_LSYNCD */
+
+	/* There are three sshd-related services: rsyncd, ssh-shell, and sftp.
+	 * We check rsyncd and ssh-shell here, and sftp was already checked
+	 * in session_subsystem_req() */
+	if (REQ_RSYNC == cmd) {
+		if (!SYNOServiceSSHIsRegister(SZK_SSHD_REF_RSYNC)) {
+			goto Err;
+		}
+		if (0 > SYNORsyncSSHPortGet(&iPort)) {
+			SYSLOG(LOG_ERR, "Failed to SYNORsyncSSHPortGet()."SLIBERR_FMT, SLIBERR_ARGS);
+			goto Err;
+		}
+		if ((int) iPort != ssh_local_port(ssh)) {
+			goto Err;
+		}
+	}
+
+	if (REQ_SHELL == cmd) {
+		if (!SYNOServiceSSHIsRegister(SZK_SSHD_REF_SHELL)) {
+			goto Err;
+		}
+		if (0 > SYNOServiceSSHPortGet(&iPort)) {
+			SYSLOG(LOG_ERR, "Failed to SYNOServiceSSHPortGet()");
+			goto Err;
+		}
+		if ((int) iPort != ssh_local_port(ssh)) {
+			goto Err;
+		}
+	}
+#ifdef MY_ABC_HERE
+	if (REQ_SFTP != cmd && IS_USERNAME_ANONYMOUS(pw->pw_name)) {
+		goto Err;
+	}
+#endif /* MY_ABC_HERE */
+
+	blRet = TRUE;
+Err:
+	return blRet;
+}
+
+#endif // MY_ABC_HERE
+#ifdef MY_ABC_HERE
+static void SSHLogLogin(const char *szIP, const char *szUserName, uid_t uid)
+{
+	char szUID[16] = {0};
+
+	if (NULL == szIP || NULL == szUserName) {
+		return;
+	}
+
+	snprintf(szUID, sizeof(szUID), "%u", uid);
+	SLIBLogSet("auth", 0x0001, szUserName, szUID, szIP, "SSH");
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * Performs common processing for the child, such as setting up the
  * environment, closing extra file descriptors, setting the user and group
@@ -1520,6 +1806,41 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	const char *shell, *shell0;
 	struct passwd *pw = s->pw;
 	int r = 0;
+
+#ifdef MY_ABC_HERE
+	SSH_CMD SSHCmd = REQ_UNKNOWN;
+
+	if (IsSFTPReq(command)){
+		SSHCmd = REQ_SFTP;
+	} else if (IsRsyncReq(command)){
+		SSHCmd = REQ_RSYNC;
+	} else if (IsTimebkpRequest(command)){
+		SSHCmd = REQ_TIMEBKP;
+	} else if (SYNOServiceSSHIsRegister(SZK_SSHD_REF_SHELL) && IsAllowShell(pw)){
+		SSHCmd = REQ_SHELL;
+	} else {
+		goto Err;
+	}
+
+	if (REQ_RSYNC == SSHCmd) {
+		pw = SYNOChgValForRsync(pw);
+#ifdef MY_ABC_HERE
+		if (-1 == setenv("AUTHDONE", "SUCCESS", 0)) {
+			goto Err;
+		}
+#endif /* MY_ABC_HERE */
+	}
+	if (!SSHCanLogin(SSHCmd, ssh, pw)) {
+		goto Err;
+	}
+	goto Pass;
+
+Err:
+	fprintf(stderr, "Permission denied, please try again.\n");
+	exit(1);
+
+Pass:
+#endif /* MY_ABC_HERE */
 
 	sshpkt_fmt_connection_id(ssh, remote_id, sizeof(remote_id));
 
@@ -1547,7 +1868,13 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	/* When PAM is enabled we rely on it to do the nologin check */
 	if (!options.use_pam)
 		do_nologin(pw);
+#ifdef MY_ABC_HERE
+	if (REQ_SFTP != SSHCmd) {
+		do_setusercontext(pw);
+	}
+#else
 	do_setusercontext(pw);
+#endif /* MY_ABC_HERE */
 	/*
 	 * PAM session modules in do_setusercontext may have
 	 * generated messages, so if this in an interactive
@@ -1677,6 +2004,14 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	else
 		shell0 = shell;
 
+#ifdef MY_ABC_HERE
+	if (REQ_SHELL == SSHCmd) {
+		const char *szHost = ssh_remote_ipaddr(ssh);
+		const char *szUser = pw->pw_name;
+
+		SSHLogLogin(szHost, szUser, pw->pw_uid);
+	}
+#endif /* MY_ABC_HERE */
 	/*
 	 * If we have no command, execute the shell.  In this case, the shell
 	 * name to be passed in argv[0] is preceded by '-' to indicate that
@@ -1974,6 +2309,24 @@ session_subsystem_req(struct ssh *ssh, Session *s)
 			prog = options.subsystem_command[i];
 			cmd = options.subsystem_args[i];
 			if (strcmp(INTERNAL_SFTP_NAME, prog) == 0) {
+#ifdef MY_ABC_HERE
+				if (!IsSftpdEnabled()) {
+					debug("skip sftp subsytem since sftp is not enabled");
+					continue;
+				}
+				if (!IsSftpPortMatched(ssh)) {
+					debug("skip sftp subsytem since sftp port is not matched");
+					continue;
+				}
+#ifdef MY_ABC_HERE
+				if (!IS_USERNAME_FTP(s->pw->pw_name) && !IS_USERNAME_ANONYMOUS(s->pw->pw_name)) {
+					if (TRUE != SLIBAppPrivUserHas(s->pw->pw_name, SZK_APPPRIV_SFTP, ssh_remote_ipaddr(ssh))) {
+						debug("skip sftp subsytem since user %s does not have app privilege", s->pw->pw_name);
+						continue;
+					}
+				}
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 				s->is_subsystem = SUBSYSTEM_INT_SFTP;
 				debug("subsystem: %s", prog);
 			} else {

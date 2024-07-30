@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: monitor.c,v 1.208 2020/02/06 22:30:54 naddy Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -58,6 +61,11 @@
 #ifdef WITH_OPENSSL
 #include <openssl/dh.h>
 #endif
+#ifdef MY_ABC_HERE
+#include <synocore/bsd.h>
+#include <synosdk/user.h>
+#include <synosdk/wins.h>
+#endif /* MY_ABC_HERE */
 
 #include "openbsd-compat/sys-tree.h"
 #include "openbsd-compat/sys-queue.h"
@@ -96,6 +104,9 @@
 #include "match.h"
 #include "ssherr.h"
 #include "sk-api.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
 
 #ifdef GSSAPI
 static Gssctxt *gsscontext = NULL;
@@ -597,6 +608,8 @@ mm_answer_moduli(struct ssh *ssh, int sock, struct sshbuf *m)
 			fatal("%s: buffer error: %s", __func__, ssh_err(r));
 		return (0);
 	} else {
+		const BIGNUM *p, *g;
+		DH_get0_pqg(dh, &p, NULL, &g);
 		/* Send first bignum */
 		DH_get0_pqg(dh, &dh_p, NULL, &dh_g);
 		if ((r = sshbuf_put_u8(m, 1)) != 0 ||
@@ -713,6 +726,52 @@ mm_answer_sign(struct ssh *ssh, int sock, struct sshbuf *m)
 
 /* Retrieves the password entry and also checks if the user is permitted */
 
+#ifdef MY_ABC_HERE
+char *resolve_real_name(const char *raw_name)
+{
+	char full_name[SYNO_DOMAIN_USERNAME_MAX + 1] = {0};
+	char real_name[SYNO_DOMAIN_USERNAME_MAX + 1] = {0};
+
+	if (0 >= SYNOUserLoginNameConvert(raw_name, full_name, sizeof(full_name))) {
+		snprintf(full_name, sizeof(full_name), "%s", raw_name);
+	}
+
+	if (0 == SLIBUserRealNameGet(full_name, real_name, sizeof(real_name))) {
+		debug("get user realname %s => %s", raw_name, real_name);
+		return xstrdup(real_name);
+	}
+
+	debug("cant not get user realname from %s", raw_name);
+	return xstrdup(raw_name);
+}
+
+static char *resolve_real_name_with_style(const char *s)
+{
+	char *style = strchr(s, ':');
+	char *raw_name = NULL;
+	char *real_name = NULL;
+	size_t length = 0;
+
+	if (!style) {
+		return resolve_real_name(s);
+	}
+
+	raw_name = xstrdup(s);
+	style = raw_name + (style - s);
+	*style = '\0';
+	real_name = resolve_real_name(raw_name);
+	*style = ':';
+
+	length = strlen(real_name) + strlen(style) + 1;
+	real_name = reallocf(real_name, length);
+	strcat(real_name, style);
+	free(raw_name);
+	return real_name;
+}
+
+#define move_ptr(src, dst) free(dst); dst = src; src = NULL;
+#endif /* MY_ABC_HERE */
+
 int
 mm_answer_pwnamallow(struct ssh *ssh, int sock, struct sshbuf *m)
 {
@@ -720,6 +779,9 @@ mm_answer_pwnamallow(struct ssh *ssh, int sock, struct sshbuf *m)
 	struct passwd *pwent;
 	int r, allowed = 0;
 	u_int i;
+#ifdef MY_ABC_HERE
+	char *real_name = NULL;
+#endif /* MY_ABC_HERE */
 
 	debug3("%s", __func__);
 
@@ -728,6 +790,10 @@ mm_answer_pwnamallow(struct ssh *ssh, int sock, struct sshbuf *m)
 
 	if ((r = sshbuf_get_cstring(m, &username, NULL)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
+#ifdef MY_ABC_HERE
+	real_name = resolve_real_name(username);
+	move_ptr(real_name, username);
+#endif /* MY_ABC_HERE */
 
 	pwent = getpwnamallow(ssh, username);
 
@@ -886,13 +952,25 @@ mm_answer_authpassword(struct ssh *ssh, int sock, struct sshbuf *m)
 	int r, authenticated;
 	size_t plen;
 
+#ifdef MY_ABC_HERE
+	if (!options.password_authentication && !IS_USERNAME_ANONYMOUS(authctxt->user))
+#else
 	if (!options.password_authentication)
+#endif
 		fatal("%s: password authentication not enabled", __func__);
 	if ((r = sshbuf_get_cstring(m, &passwd, &plen)) != 0)
 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
 	/* Only authenticate if the context is valid */
+#ifdef MY_ABC_HERE
+	if (options.password_authentication || IS_USERNAME_ANONYMOUS(authctxt->user)) {
+		authenticated = auth_password(ssh, passwd);
+	} else {
+		authenticated = 0;
+	}
+#else
 	authenticated = options.password_authentication &&
 	    auth_password(ssh, passwd);
+#endif
 	explicit_bzero(passwd, plen);
 	free(passwd);
 
@@ -1256,6 +1334,9 @@ monitor_valid_userblob(const u_char *data, u_int datalen)
 	size_t len;
 	u_char type;
 	int r, fail = 0;
+#ifdef MY_ABC_HERE
+	char *real_name = NULL;
+#endif /* MY_ABC_HERE */
 
 	if ((b = sshbuf_from(data, datalen)) == NULL)
 		fatal("%s: sshbuf_from", __func__);
@@ -1286,6 +1367,10 @@ monitor_valid_userblob(const u_char *data, u_int datalen)
 	xasprintf(&userstyle, "%s%s%s", authctxt->user,
 	    authctxt->style ? ":" : "",
 	    authctxt->style ? authctxt->style : "");
+#ifdef MY_ABC_HERE
+	real_name = resolve_real_name_with_style(cp);
+	move_ptr(real_name, cp);
+#endif /* MY_ABC_HERE */
 	if (strcmp(userstyle, cp) != 0) {
 		logit("wrong user name passed to monitor: "
 		    "expected %s != %.100s", userstyle, cp);
@@ -1322,6 +1407,9 @@ monitor_valid_hostbasedblob(const u_char *data, u_int datalen,
 	size_t len;
 	int r, fail = 0;
 	u_char type;
+#ifdef MY_ABC_HERE
+	char *real_name = NULL;
+#endif /* MY_ABC_HERE */
 
 	if ((b = sshbuf_from(data, datalen)) == NULL)
 		fatal("%s: sshbuf_new", __func__);
@@ -1342,6 +1430,10 @@ monitor_valid_hostbasedblob(const u_char *data, u_int datalen,
 	xasprintf(&userstyle, "%s%s%s", authctxt->user,
 	    authctxt->style ? ":" : "",
 	    authctxt->style ? authctxt->style : "");
+#ifdef MY_ABC_HERE
+	real_name = resolve_real_name_with_style(cp);
+	move_ptr(real_name, cp);
+#endif /* MY_ABC_HERE */
 	if (strcmp(userstyle, cp) != 0) {
 		logit("wrong user name passed to monitor: "
 		    "expected %s != %.100s", userstyle, cp);

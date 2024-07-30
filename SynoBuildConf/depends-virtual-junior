@@ -1,0 +1,8 @@
+[BuildDependent-Tag]
+uthash-1.9.x
+linux-pam
+zlib-1.x
+openssl
+${KernelHeaders}
+libbsd-0.2.0
+

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: auth.c,v 1.146 2020/01/31 22:42:45 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -88,6 +91,69 @@ extern struct sshauthopt *auth_opts;
 /* Debugging messages */
 static struct sshbuf *auth_debug;
 
+#ifdef MY_ABC_HERE
+#include <synocore/conf.h>
+#include <synocore/file.h>
+#include <synosdk/group.h>
+
+int is_allow_directory_service_admin(const char *szName)
+{
+	int ret = -1;
+	AUTH_TYPE authType = AUTH_MIN;
+	char szValue[4] = {'\0'};
+	if (NULL == szName) {
+		goto End;
+	}
+	authType = SYNOGetAuthType(szName);
+	if (AUTH_DOMAIN != authType && AUTH_LDAP != authType) {
+		// This function only modify for directory service user.
+		goto End;
+	}
+
+	// check key which enable domain admin login.
+	if (0 >= SLIBCFileGetKeyValue(SZF_SYNO_INFO, SZK_ENABLE_DIRECTORY_SERVICE_SSH_LOGIN,
+	    szValue, sizeof(szValue), 0) ||
+	    0 != strcasecmp(SZV_YES, szValue)) {
+		goto End;
+	}
+
+	if (1 != SLIBGroupIsAdminGroupMem(szName, FALSE)) {
+		goto End;
+	}
+	ret = 0;
+End:
+	return ret;
+}
+static struct passwd *
+pwcopy_for_dirService(struct passwd *pw)
+{
+	struct passwd *copy = xcalloc(1, sizeof(*copy));
+
+	copy->pw_name = xstrdup(pw->pw_name);
+	copy->pw_passwd = xstrdup(pw->pw_passwd);
+#ifdef HAVE_STRUCT_PASSWD_PW_GECOS
+	copy->pw_gecos = xstrdup(pw->pw_gecos);
+#endif
+	copy->pw_uid = pw->pw_uid;
+	copy->pw_gid = pw->pw_gid;
+#ifdef HAVE_STRUCT_PASSWD_PW_EXPIRE
+	copy->pw_expire = pw->pw_expire;
+#endif
+#ifdef HAVE_STRUCT_PASSWD_PW_CHANGE
+	copy->pw_change = pw->pw_change;
+#endif
+#ifdef HAVE_STRUCT_PASSWD_PW_CLASS
+	copy->pw_class = xstrdup(pw->pw_class);
+#endif
+	copy->pw_dir = xstrdup(pw->pw_dir);
+	if (0 == is_allow_directory_service_admin(pw->pw_name)) {
+		copy->pw_shell = xstrdup("/bin/sh");
+	} else {
+		copy->pw_shell = xstrdup(pw->pw_shell);
+	}
+	return copy;
+}
+#endif /* MY_ABC_HERE */
 /*
  * Check if the user is allowed to log in via ssh. If user is listed
  * in DenyUsers or one of user's groups is listed in DenyGroups, false
@@ -100,7 +166,9 @@ static struct sshbuf *auth_debug;
 int
 allowed_user(struct ssh *ssh, struct passwd * pw)
 {
+#ifndef MY_ABC_HERE
 	struct stat st;
+#endif /* MY_ABC_HERE */
 	const char *hostname = NULL, *ipaddr = NULL, *passwd = NULL;
 	u_int i;
 	int r;
@@ -168,6 +236,7 @@ allowed_user(struct ssh *ssh, struct passwd * pw)
 		char *shell = xstrdup((pw->pw_shell[0] == '\0') ?
 		    _PATH_BSHELL : pw->pw_shell); /* empty = /bin/sh */
 
+#ifndef MY_ABC_HERE
 		if (stat(shell, &st) == -1) {
 			logit("User %.100s not allowed because shell %.100s "
 			    "does not exist", pw->pw_name, shell);
@@ -181,6 +250,7 @@ allowed_user(struct ssh *ssh, struct passwd * pw)
 			free(shell);
 			return 0;
 		}
+#endif /* MY_ABC_HERE */
 		free(shell);
 	}
 
@@ -614,8 +684,13 @@ getpwnamallow(struct ssh *ssh, const char *user)
 		auth_close(as);
 #endif
 #endif
+#ifdef MY_ABC_HERE
+	if (pw != NULL)
+		return (pwcopy_for_dirService(pw));
+#else
 	if (pw != NULL)
 		return (pwcopy(pw));
+#endif /* MY_ABC_HERE */
 	return (NULL);
 }
 

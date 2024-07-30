@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: readpass.c,v 1.61 2020/01/23 07:10:22 dtucker Exp $ */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.
@@ -180,6 +183,19 @@ read_passphrase(const char *prompt, int flags)
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+char *
+read_passphrase_from_file(const char *pass_file)
+{
+	char buf[1024];
+
+    if (readpassphrase_from_file(pass_file, buf, sizeof buf) == NULL) {
+		return xstrdup("");
+	}
+
+	return xstrdup(buf);
+}
+#endif /* MY_ABC_HERE */
 int
 ask_permission(const char *fmt, ...)
 {

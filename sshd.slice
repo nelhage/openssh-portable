@@ -1,0 +1,7 @@
+[Unit]
+Description=OpenBSD Secure Shell server
+
+[X-Synology]
+NameI18n=firewall:firewall_service_opt_ssh
+AppId=SYNO.SDS.AdminCenter.Application
+IconName=icon-terminal-and-SNMP

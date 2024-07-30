@@ -1,4 +1,7 @@
-/* $OpenBSD: sshconnect2.c,v 1.320 2020/02/06 22:48:23 djm Exp $ */
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
+/* $OpenBSD: sshconnect2.c,v 1.326 2020/09/18 05:23:03 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Damien Miller.  All rights reserved.
@@ -102,12 +105,25 @@ verify_host_key_callback(struct sshkey *hostkey, struct ssh *ssh)
 	return 0;
 }
 
+/* Returns the first item from a comma-separated algorithm list */
+static char *
+first_alg(const char *algs)
+{
+	char *ret, *cp;
+
+	ret = xstrdup(algs);
+	if ((cp = strchr(ret, ',')) != NULL)
+		*cp = '\0';
+	return ret;
+}
+
 static char *
 order_hostkeyalgs(char *host, struct sockaddr *hostaddr, u_short port)
 {
-	char *oavail, *avail, *first, *last, *alg, *hostname, *ret;
+	char *oavail = NULL, *avail = NULL, *first = NULL, *last = NULL;
+	char *alg = NULL, *hostname = NULL, *ret = NULL, *best = NULL;
 	size_t maxlen;
-	struct hostkeys *hostkeys;
+	struct hostkeys *hostkeys = NULL;
 	int ktype;
 	u_int i;
 
@@ -119,6 +135,26 @@ order_hostkeyalgs(char *host, struct sockaddr *hostaddr, u_short port)
 	for (i = 0; i < options.num_system_hostfiles; i++)
 		load_hostkeys(hostkeys, hostname, options.system_hostfiles[i]);
 
+	/*
+	 * If a plain public key exists that matches the type of the best
+	 * preference HostkeyAlgorithms, then use the whole list as is.
+	 * Note that we ignore whether the best preference algorithm is a
+	 * certificate type, as sshconnect.c will downgrade certs to
+	 * plain keys if necessary.
+	 */
+	best = first_alg(options.hostkeyalgorithms);
+	if (lookup_key_in_hostkeys_by_type(hostkeys,
+	    sshkey_type_plain(sshkey_type_from_name(best)), NULL)) {
+		debug3("%s: have matching best-preference key type %s, "
+		    "using HostkeyAlgorithms verbatim", __func__, best);
+		ret = xstrdup(options.hostkeyalgorithms);
+		goto out;
+	}
+
+	/*
+	 * Otherwise, prefer the host key algorithms that match known keys
+	 * while keeping the ordering of HostkeyAlgorithms as much as possible.
+	 */
 	oavail = avail = xstrdup(options.hostkeyalgorithms);
 	maxlen = strlen(avail) + 1;
 	first = xmalloc(maxlen);
@@ -147,6 +183,8 @@ order_hostkeyalgs(char *host, struct sockaddr *hostaddr, u_short port)
 	if (*first != '\0')
 		debug3("%s: prefer hostkeyalgs: %s", __func__, first);
 
+ out:
+	free(best);
 	free(first);
 	free(last);
 	free(hostname);
@@ -1010,7 +1048,15 @@ userauth_passwd(struct ssh *ssh)
 		error("Permission denied, please try again.");
 
 	xasprintf(&prompt, "%s@%s's password: ", authctxt->server_user, host);
+#ifdef MY_ABC_HERE
+	if (NULL != options.pass_file) {
+		password = read_passphrase_from_file(options.pass_file);		
+	}else {
+		password = read_passphrase(prompt, 0);
+	}
+#else
 	password = read_passphrase(prompt, 0);
+#endif /* MY_ABC_HERE */
 	if ((r = sshpkt_start(ssh, SSH2_MSG_USERAUTH_REQUEST)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, authctxt->server_user)) != 0 ||
 	    (r = sshpkt_put_cstring(ssh, authctxt->service)) != 0 ||
@@ -1879,7 +1925,15 @@ input_userauth_info_req(int type, u_int32_t seq, struct ssh *ssh)
 		if ((r = sshpkt_get_cstring(ssh, &prompt, NULL)) != 0 ||
 		    (r = sshpkt_get_u8(ssh, &echo)) != 0)
 			goto out;
+#ifdef MY_ABC_HERE
+		if (NULL != options.pass_file) {
+			response = read_passphrase_from_file(options.pass_file);
+		} else {
+			response = read_passphrase(prompt, echo ? RP_ECHO : 0);
+		}
+#else
 		response = read_passphrase(prompt, echo ? RP_ECHO : 0);
+#endif
 		if ((r = sshpkt_put_cstring(ssh, response)) != 0)
 			goto out;
 		freezero(response, strlen(response));

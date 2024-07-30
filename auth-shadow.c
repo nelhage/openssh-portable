@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Copyright (c) 2004 Darren Tucker.  All rights reserved.
  *
@@ -93,7 +96,9 @@ auth_shadow_pwexpired(Authctxt *ctxt)
 	int r, daysleft, disabled = 0;
 
 	if ((spw = getspnam((char *)user)) == NULL) {
+#ifndef MY_ABC_HERE
 		error("Could not get shadow information for %.100s", user);
+#endif /* MY_ABC_HERE */
 		return 0;
 	}
 

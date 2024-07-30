@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*-
  * Copyright (c) 2002 Networks Associates Technology, Inc.
  * All rights reserved.
@@ -512,7 +515,11 @@ sshpam_thread(void *ctxtp)
 	    (const void *)&sshpam_conv);
 	if (sshpam_err != PAM_SUCCESS)
 		goto auth_fail;
+#ifdef MY_ABC_HERE
+	sshpam_err = pam_authenticate(sshpam_handle, flags | PAM_SILENT);
+#else
 	sshpam_err = pam_authenticate(sshpam_handle, flags);
+#endif /* MY_ABC_HERE */
 	if (sshpam_err == PAM_MAXTRIES)
 		sshpam_set_maxtries_reached(1);
 	if (sshpam_err != PAM_SUCCESS)
@@ -580,6 +587,14 @@ sshpam_thread(void *ctxtp)
 		ssh_msg_send(ctxt->pam_csock, PAM_ACCT_EXPIRED, buffer);
 	else if (sshpam_maxtries_reached)
 		ssh_msg_send(ctxt->pam_csock, PAM_MAXTRIES, buffer);
+#ifdef MY_ABC_HERE
+	else if (sshpam_err == PAM_NO_MODULE_DATA) {
+		sshbuf_reset(buffer);
+		sshbuf_put_cstring(buffer, "Require 2-step verification; please setup one via DSM web UI");
+		ssh_msg_send(ctxt->pam_csock, PAM_ERROR_MSG, buffer);
+		ssh_msg_send(ctxt->pam_csock, PAM_AUTHINFO_UNAVAIL, buffer);
+	}
+#endif
 	else
 		ssh_msg_send(ctxt->pam_csock, PAM_AUTH_ERR, buffer);
 	sshbuf_free(buffer);
@@ -867,8 +882,15 @@ sshpam_query(void *ctx, char **name, char **info,
 			free(msg);
 			break;
 		case PAM_ACCT_EXPIRED:
+#ifdef MY_ABC_HERE
+		case PAM_AUTHINFO_UNAVAIL:
+#endif
 		case PAM_MAXTRIES:
+#ifdef MY_ABC_HERE
+			if (type == PAM_ACCT_EXPIRED || type == PAM_AUTHINFO_UNAVAIL)
+#else
 			if (type == PAM_ACCT_EXPIRED)
+#endif
 				sshpam_account_status = 0;
 			if (type == PAM_MAXTRIES)
 				sshpam_set_maxtries_reached(1);
@@ -1351,7 +1373,11 @@ sshpam_auth_passwd(Authctxt *authctxt, const char *password)
 		fatal("PAM: %s: failed to set PAM_CONV: %s", __func__,
 		    pam_strerror(sshpam_handle, sshpam_err));
 
+#ifdef MY_ABC_HERE
+	sshpam_err = pam_authenticate(sshpam_handle, flags | PAM_SILENT);
+#else
 	sshpam_err = pam_authenticate(sshpam_handle, flags);
+#endif /* MY_ABC_HERE */
 	sshpam_password = NULL;
 	free(fake);
 	if (sshpam_err == PAM_MAXTRIES)
@@ -1361,6 +1387,11 @@ sshpam_auth_passwd(Authctxt *authctxt, const char *password)
 		    authctxt->user);
 		return 1;
 	} else {
+#ifdef MY_ABC_HERE
+		if (PAM_MAXTRIES == sshpam_err) {
+			exit(EXIT_FAILURE);
+		}
+#endif /* MY_ABC_HERE */
 		debug("PAM: password authentication failed for %.100s: %s",
 		    authctxt->valid ? authctxt->user : "an illegal user",
 		    pam_strerror(sshpam_handle, sshpam_err));

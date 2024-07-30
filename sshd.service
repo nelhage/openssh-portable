@@ -1,0 +1,22 @@
+[Unit]
+Description=OpenBSD Secure Shell server
+After=network.target
+
+[Service]
+ExecStartPre=-/usr/lib/systemd/scripts/sshd_checker.sh
+ExecStartPre=/usr/bin/ssh-keygen -A
+ExecStart=/usr/bin/sshd -D
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+TimeoutStartSec=0
+Slice=sshd.slice
+
+[Install]
+WantedBy=multi-user.target
+
+[X-Synology]
+Author=File Protocol Team (FPT)
+Name=SSH service
+DefaultEnable=no
+FirewallSections=ssh

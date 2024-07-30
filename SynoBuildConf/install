@@ -1,0 +1,33 @@
+#!/bin/bash
+# Copyright (c) 2000-2015 Synology Inc. All rights reserved.
+
+install -D -m 755 ssh ${TmpInstDir}/usr/bin/ssh
+install -D -m 755 ssh-keygen ${TmpInstDir}/usr/bin/ssh-keygen
+install -D -m 755 scp ${TmpInstDir}/usr/bin/scp
+install -D -m 755 sshd ${TmpInstDir}/usr/bin/sshd
+install -D -m 755 sftp ${TmpInstDir}/usr/bin/sftp
+
+if [ "x$NOSTRIP" != "xNOSTRIP" ]; then
+	${STRIP} ${TmpInstDir}/usr/bin/ssh
+	${STRIP} ${TmpInstDir}/usr/bin/ssh-keygen
+	${STRIP} ${TmpInstDir}/usr/bin/scp
+	${STRIP} ${TmpInstDir}/usr/bin/sshd
+	${STRIP} ${TmpInstDir}/usr/bin/sftp
+fi
+
+install -D -m 644 sshd_config ${TmpInstDir}/etc/ssh/sshd_config
+
+mkdir -p ${TmpInstDir}/var/empty
+
+install -D -m 755 sftp.sh ${TmpInstDir}/usr/syno/etc/rc.sysv/sftp.sh
+install -D -m 755 sshd_mtu_change.sh ${TmpInstDir}${SynoPluginDir}/net/mtu_change/sshd_mtu_change.sh
+install -D -m 755 sshd.pam ${TmpInstDir}/etc/pam.d/sshd
+install -D -m 644 logcollector_whitelist ${TmpInstDir}/usr/syno/etc/logcollector/whitelist/openssh
+install -D -m 644 sshd.service ${TmpInstDir}/usr/lib/systemd/system/sshd.service
+install -D -m 644 sshd.slice ${TmpInstDir}/usr/lib/systemd/system/sshd.slice
+install -D -m 755 synoconf/sshd_checker.sh ${TmpInstDir}/usr/lib/systemd/scripts/sshd_checker.sh
+
+if checkPlatformFunction SYNO_FEA_HYPER_CONVERGED; then
+	install -D -m 644 synoconf/sofs-sshd_config ${TmpInstDir}/etc/ssh/sofs-sshd_config
+	install -D -m 644 synoconf/sofs-sshd.service ${TmpInstDir}/usr/lib/systemd/system/sofs-sshd.service
+fi

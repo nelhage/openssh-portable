@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: auth2-none.c,v 1.22 2018/07/09 21:35:50 markus Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -51,6 +54,9 @@
 #include "ssh-gss.h"
 #endif
 #include "monitor_wrap.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
 
 /* import */
 extern ServerOptions options;
@@ -66,6 +72,11 @@ userauth_none(struct ssh *ssh)
 	none_enabled = 0;
 	if ((r = sshpkt_get_end(ssh)) != 0)
 		fatal("%s: %s", __func__, ssh_err(r));
+#ifdef MY_ABC_HERE
+	if (!strcmp(((Authctxt*)ssh->authctxt)->user, SZD_ANONYMOUS)){
+		return (PRIVSEP(auth_password(ssh, "")));
+	}
+#endif /* MY_ABC_HERE */
 	if (options.permit_empty_passwd && options.password_authentication)
 		return (PRIVSEP(auth_password(ssh, "")));
 	return (0);

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: servconf.h,v 1.143 2020/01/31 22:42:45 djm Exp $ */
 
 /*
@@ -218,6 +221,9 @@ typedef struct {
 	int	expose_userauth_info;
 	u_int64_t timing_secret;
 	char   *sk_provider;
+#ifdef SYNO_SOFS_LSYNCD
+	int	syno_sofs_lsyncd;
+#endif /* SYNO_SOFS_LSYNCD */
 }       ServerOptions;
 
 /* Information about the incoming connection as used by Match */
@@ -296,5 +302,8 @@ void	 servconf_add_hostkey(const char *, const int,
 	    ServerOptions *, const char *path, int);
 void	 servconf_add_hostcert(const char *, const int,
 	    ServerOptions *, const char *path);
+#ifdef MY_ABC_HERE
+int SYNORsyncSSHPortGet(unsigned int *pRsyncSSHPort);
+#endif /* MY_ABC_HERE */
 
 #endif				/* SERVCONF_H */

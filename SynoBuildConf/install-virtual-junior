@@ -1,0 +1,42 @@
+#!/bin/bash
+# Copyright (c) 2000-2015, 2018 Synology Inc. All rights reserved.
+
+if ! checkPlatformFunction SYNO_FEA_AHA_API; then
+	SkipThisProject
+	return
+fi
+
+SynoSbinDir="/usr/syno/sbin"
+SynoBinDir="/usr/syno/bin"
+
+mkdir -p ${TmpInstDir}/usr/bin
+install -m755 -c ssh ${TmpInstDir}/usr/bin
+install -m755 -c ssh-keygen ${TmpInstDir}/usr/bin
+install -m755 -c scp ${TmpInstDir}/usr/bin/scp
+install -m755 -c sshd ${TmpInstDir}/usr/bin
+install -m755 -c sftp ${TmpInstDir}/usr/bin/sftp
+
+mkdir -p ${TmpInstDir}${SynoBinDir}
+ln -s /usr/bin/ssh ${TmpInstDir}${SynoBinDir}/ssh
+ln -s /usr/bin/ssh-keygen ${TmpInstDir}${SynoBinDir}/ssh-keygen
+ln -s /usr/bin/scp ${TmpInstDir}${SynoBinDir}/scp
+
+mkdir -p ${TmpInstDir}${SynoSbinDir}
+ln -s /usr/bin/sshd ${TmpInstDir}${SynoSbinDir}/sshd
+ln -s /usr/bin/sftp ${TmpInstDir}${SynoSbinDir}/sftp
+
+if [ "x$NOSTRIP" != "xNOSTRIP" ]; then
+	${STRIP} ${TmpInstDir}/usr/bin/ssh
+	${STRIP} ${TmpInstDir}/usr/bin/ssh-keygen
+	${STRIP} ${TmpInstDir}/usr/bin/scp
+	${STRIP} ${TmpInstDir}/usr/bin/sshd
+	${STRIP} ${TmpInstDir}/usr/bin/sftp
+fi
+
+install -D -m644 sshd_config_virtual_junior ${TmpInstDir}/etc/ssh/sshd_config
+
+mkdir -p ${TmpInstDir}/var/empty
+mkdir -p ${TmpInstDir}/usr/syno/etc/rc.d
+install -D -m644 sshd.service ${TmpInstDir}/usr/lib/systemd/system/sshd.service
+install -D -m755 sftp.sh ${TmpInstDir}/usr/syno/etc/rc.sysv/sftp.sh
+install -D -m755 sshd.pam_virtual_junior ${TmpInstDir}/etc/pam.d/sshd

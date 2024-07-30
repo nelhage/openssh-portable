@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*	$OpenBSD: readpassphrase.c,v 1.26 2016/10/18 12:47:18 millert Exp $	*/
 
 /*
@@ -50,6 +53,49 @@ static volatile sig_atomic_t signo[_NSIG];
 
 static void handler(int);
 
+#ifdef MY_ABC_HERE
+char *
+readpassphrase_from_file(const char *pass_file, char *buf, size_t bufsiz)
+{
+	struct stat st;
+	char buffer[512], *p, *pass;
+	int fd, n, ok = 0;
+
+	if (NULL == pass_file || NULL == buf) {
+		return NULL;
+	}
+
+	if (stat(pass_file, &st) == -1) {
+		//stat failed!
+	} else {
+		ok = 1;
+	}
+
+	if (!ok) {
+		//password file error!!
+		return NULL;
+	}
+//??
+	if ((fd = open(pass_file, O_RDONLY)) < 0) {
+        return NULL;
+	}
+
+    n = read(fd, buffer, sizeof buffer - 1);
+	close(fd);
+	if (n <= 0)
+		return NULL;
+
+	buffer[n] = '\0';
+	p = buffer;
+	if ((pass = strsep(&p, "\n\r")) != NULL) {
+		bzero(buf, bufsiz);
+		strncpy(buf, pass, bufsiz);
+		return buf;
+	}
+	
+	return NULL;
+}
+#endif /* MY_ABC_HERE */
 char *
 readpassphrase(const char *prompt, char *buf, size_t bufsiz, int flags)
 {

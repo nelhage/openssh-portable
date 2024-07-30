@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: misc.c,v 1.146 2020/01/28 01:49:36 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -74,6 +77,12 @@
 #include "sshbuf.h"
 #include "ssherr.h"
 #include "platform.h"
+
+#ifdef MY_ABC_HERE
+#include <synocore/error.h>
+#include <synosdk/group.h>
+#include <synoacl/synoacl.h>
+#endif
 
 /* remove newline at end of string */
 char *
@@ -1875,6 +1884,91 @@ exited_cleanly(pid_t pid, const char *tag, const char *cmd, int quiet)
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+/*
+ * Check only owner, administrators and system users has ACL permission to modify file
+ *
+ * Return 1: check pass
+ *        0: check fail
+ *       -1: not ACL permission
+ */
+static int syno_acl_safe_path(const char *path, struct stat *st, uid_t uid, char *err, size_t errlen) {
+	int ret = -1;
+	SYNO_ACL *pACL = NULL;
+	SYNO_ACL_ENTRY *pAce = NULL;
+	SYNO_ACL_ID aclId;
+
+	if (0 > SYNOACLGet(path, -1, SYNOACL_INHERITED, &pACL)) {
+		if (ERR_SYNOACL_NOT_SUPPORT == SLIBCErrGet()) {
+			debug3("%s: [%s] is Linux mode", __func__, path);
+		} else {
+			debug("%s: SYNOACLGet(%s) failed [0x%X]", __func__, path, SLIBCErrGet());
+		}
+		ret = -1;
+		goto End;
+	}
+
+	if (0 > SYNOACLOwnerIdGet(path, &aclId)) {
+		debug("%s: SYNOACLOwnerIdGet(%s) failed [0x%X]", __func__, path, SLIBCErrGet());
+		ret = -1;
+		goto End;
+	}
+	if (SYNOSDK_ACL_USER != aclId.type || aclId.id != uid) {
+		debug3("%s: [%s] owner type[%d] id[%d]", __func__, path, aclId.type, aclId.id);
+		snprintf(err, errlen, "bad ACL ownership for file %s", path);
+		ret = 0;
+		goto End;
+	}
+
+	for (pAce = pACL->pFirstEnt; pAce; pAce = pAce->pNext) {
+		if (SYNOSDK_ACL_USER == pAce->aid.type && pAce->aid.id == uid) {
+			continue;
+		}
+		if (SYNOSDK_ACL_OWNER == pAce->aid.type) {
+			continue;
+		}
+		if (SYNOSDK_ACL_GROUP == pAce->aid.type) {
+			if (0 < SYNOGroupIsAdminGroupByGid(pAce->aid.id)) {
+				continue;
+			}
+			if (ERR_NO_SUCH_GROUP == SLIBCErrGet()) {
+				debug("%s: [%s] ACL entry: ignore not exist gid[%d]", __func__, path, pAce->aid.id);
+				continue;
+			}
+			debug("%s: [%s] ACL entry: gid[%d] is not an admin group [0x%X]", __func__, path, pAce->aid.id, SLIBCErrGet());
+		}
+		if (SYNOSDK_ACL_SYSTEM == pAce->aid.type) {
+			continue;
+		}
+
+		if (pAce->isAllow && 0 != (pAce->perm & (
+				SYNOSDK_ACL_PERM_WRITE |
+				SYNOSDK_ACL_PERM_APPEND |
+				SYNOSDK_ACL_PERM_WRITE_PERMISSION |
+				SYNOSDK_ACL_PERM_GET_OWNER_SHIP
+			))) {
+			debug3("%s: [%s] ACL entry: type[%d] id[%d] perm[%u](%d) allow[%d]",
+				__func__, path, pAce->aid.type, pAce->aid.id, pAce->perm,
+				(pAce->perm & (
+					SYNOSDK_ACL_PERM_WRITE |
+					SYNOSDK_ACL_PERM_APPEND |
+					SYNOSDK_ACL_PERM_WRITE_PERMISSION |
+					SYNOSDK_ACL_PERM_GET_OWNER_SHIP
+				)),
+				pAce->isAllow);
+			snprintf(err, errlen, "bad ACL permission for file %s", path);
+			ret = 0;
+			goto End;
+		}
+	}
+
+	ret = 1;
+End:
+	SYNOACLFree(pACL);
+	return ret;
+}
+#endif
+
 /*
  * Check a given path for security. This is defined as all components
  * of the path to the file must be owned by either the owner of
@@ -1896,6 +1990,9 @@ safe_path(const char *name, struct stat *stp, const char *pw_dir,
 	char *cp;
 	int comparehome = 0;
 	struct stat st;
+#ifdef MY_ABC_HERE
+	int acl_ret = -1;
+#endif
 
 	if (realpath(name, buf) == NULL) {
 		snprintf(err, errlen, "realpath %s failed: %s", name,
@@ -1909,12 +2006,25 @@ safe_path(const char *name, struct stat *stp, const char *pw_dir,
 		snprintf(err, errlen, "%s is not a regular file", buf);
 		return -1;
 	}
+#ifdef MY_ABC_HERE
+	if (-1 < (acl_ret = syno_acl_safe_path(buf, stp, uid, err, errlen))) {
+		if (0 == acl_ret) {
+			return -1;
+		}
+	} else if ((!platform_sys_dir_uid(stp->st_uid) && stp->st_uid != uid) ||
+	    (stp->st_mode & 022) != 0) {
+		snprintf(err, errlen, "bad ownership or modes for file %s",
+		    buf);
+		return -1;
+	}
+#else
 	if ((!platform_sys_dir_uid(stp->st_uid) && stp->st_uid != uid) ||
 	    (stp->st_mode & 022) != 0) {
 		snprintf(err, errlen, "bad ownership or modes for file %s",
 		    buf);
 		return -1;
 	}
+#endif
 
 	/* for each component of the canonical path, walking upwards */
 	for (;;) {
@@ -1924,6 +2034,23 @@ safe_path(const char *name, struct stat *stp, const char *pw_dir,
 		}
 		strlcpy(buf, cp, sizeof(buf));
 
+#ifdef MY_ABC_HERE
+		if (stat(buf, &st) < 0) {
+			snprintf(err, errlen,
+			    "bad ownership or modes for directory %s", buf);
+			return -1;
+		}
+		if (-1 < (acl_ret = syno_acl_safe_path(buf, &st, uid, err, errlen))) {
+			if (0 == acl_ret) {
+				return -1;
+			}
+		} else if ((!platform_sys_dir_uid(st.st_uid) && st.st_uid != uid) ||
+		    (st.st_mode & 022) != 0) {
+			snprintf(err, errlen,
+			    "bad ownership or modes for directory %s", buf);
+			return -1;
+		}
+#else
 		if (stat(buf, &st) == -1 ||
 		    (!platform_sys_dir_uid(st.st_uid) && st.st_uid != uid) ||
 		    (st.st_mode & 022) != 0) {
@@ -1931,6 +2058,7 @@ safe_path(const char *name, struct stat *stp, const char *pw_dir,
 			    "bad ownership or modes for directory %s", buf);
 			return -1;
 		}
+#endif
 
 		/* If are past the homedir then we can stop */
 		if (comparehome && strcmp(homedir, buf) == 0)

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: readconf.h,v 1.132 2020/01/23 02:46:49 dtucker Exp $ */
 
 /*
@@ -168,6 +171,9 @@ typedef struct {
 	char   *jump_extra;
 
 	char	*ignored_unknown; /* Pattern list of unknown tokens to ignore */
+#ifdef MY_ABC_HERE
+	char *pass_file;
+#endif /* MY_ABC_HERE */
 }       Options;
 
 #define SSH_CANONICALISE_NO	0

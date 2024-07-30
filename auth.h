@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: auth.h,v 1.100 2019/09/06 05:23:55 djm Exp $ */
 
 /*
@@ -236,5 +239,8 @@ int	 sys_auth_passwd(struct ssh *, const char *);
 #if defined(KRB5) && !defined(HEIMDAL)
 krb5_error_code ssh_krb5_cc_gen(krb5_context, krb5_ccache *);
 #endif
+#ifdef MY_ABC_HERE
+int is_allow_directory_service_admin(const char *szName);
+#endif /* MY_ABC_HERE */
 
 #endif /* AUTH_H */

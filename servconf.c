@@ -1,5 +1,8 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 
-/* $OpenBSD: servconf.c,v 1.360 2020/01/31 22:42:45 djm Exp $ */
+/* $OpenBSD: servconf.c,v 1.326 2018/03/01 20:32:16 markus Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
  *                    All rights reserved
@@ -69,6 +72,12 @@
 #include "auth.h"
 #include "myproposal.h"
 #include "digest.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <synocore/conf.h>
+#endif
 
 static void add_listen_addr(ServerOptions *, const char *,
     const char *, int);
@@ -190,6 +199,9 @@ initialize_server_options(ServerOptions *options)
 	options->fingerprint_hash = -1;
 	options->disable_forwarding = -1;
 	options->expose_userauth_info = -1;
+#ifdef SYNO_SOFS_LSYNCD
+	options->syno_sofs_lsyncd = -1;
+#endif /* SYNO_SOFS_LSYNCD */
 }
 
 /* Returns 1 if a string option is unset or set to "none" or 0 otherwise. */
@@ -291,6 +303,138 @@ servconf_add_hostcert(const char *file, const int line,
 	free(apath);
 }
 
+#ifdef MY_ABC_HERE
+int SYNORsyncSSHPortGet(unsigned int *pRsyncSSHPort)
+{
+	int iRet = -1;
+	unsigned int iPort = 0;
+	char szPort[8] = "";
+
+	if (0 > SLIBCFileGetKeyValue(SZF_SYNO_INFO, SZK_RSYNC_SSHD_PORT, szPort, sizeof(szPort), 0)) {
+		SYSLOG(LOG_ERR, "Failed to get "SZK_RSYNC_SSHD_PORT" of synoinfo.conf. "SLIBERR_FMT, SLIBERR_ARGS);
+		goto End;
+	}
+
+	iPort = (unsigned int) atoi(szPort);
+
+	if (0 == iPort || 65535 < iPort) {
+		iPort = SSH_DEFAULT_PORT;
+	}
+
+	*pRsyncSSHPort = iPort;
+	iRet = 0;
+End:
+	return iRet;
+}
+
+static BOOL IsPortDuplicated(int iPort, int rgPorts[], int iSize)
+{
+	int i = 0;
+	BOOL blFound = FALSE;
+
+	for (i = 0; i < iSize; i++) {
+		if (iPort == rgPorts[i]) {
+			blFound = TRUE;
+			break;
+		}
+	}
+
+	return blFound;
+}
+
+static int SYNOSSHServicePortFill(ServerOptions *options)
+{
+	int i = 0;
+	unsigned int iPort = 0;
+	int iRet = -1;
+	char *pszLine = NULL;
+	BOOL blShell = FALSE;
+	BOOL blSftpd = FALSE;
+	BOOL blRsync = FALSE;
+	PSLIBSZLIST pslLines = NULL;
+	SYNO_SFTP_CONFIG conf;
+
+#ifdef SYNO_SOFS_LSYNCD
+	// only allow using rsync for sofs sshd
+	if (options->syno_sofs_lsyncd == 1) {
+		iPort = SOFS_DEF_RSYNC_SSHD_PORT;
+		if (!IsPortDuplicated(iPort, options->ports, options->num_ports)) {
+			options->ports[options->num_ports++] = iPort;
+		}
+		iRet = 0;
+		goto End;
+	}
+#endif /* SYNO_SOFS_LSYNCD */
+
+	if (NULL == (pslLines = SLIBCSzListAlloc(BUFSIZ))) {
+		SYSLOG(LOG_ERR, "Failed to SLIBCSzListAlloc." SLIBERR_FMT, SLIBERR_ARGS);
+		goto End;
+	}
+
+	if (0 > SLIBCFileReadLines(SZF_SSHD_REFERENCE, &pslLines)) {
+		// skip /usr/syno/etc/sshd.reference if it does not exist.
+		if (ERR_OPEN_FAILED == SLIBCErrGet() || errno  == ENOENT) {
+			iRet = 0;
+			goto End;
+		}
+		SYSLOG(LOG_ERR, "Failed to SLIBCFileReadLines. [%s]" SLIBERR_FMT, SZF_SSHD_REFERENCE, SLIBERR_ARGS);
+		goto End;
+	}
+
+	for (i = 0; i < pslLines->nItem; i++) {
+		pszLine = SLIBCSzListGet(pslLines, i);
+		if (SLIBCILineKeyMatch(pszLine, SZ_SSHD_REFERENCE_SHELL)) {
+			blShell = TRUE;
+			continue;
+		}
+		if (SLIBCILineKeyMatch(pszLine, SZ_SSHD_REFERENCE_RSYNC)) {
+			blRsync = TRUE;
+			continue;
+		}
+		if (SLIBCILineKeyMatch(pszLine, SZ_SSHD_REFERENCE_SFTPD)) {
+			blSftpd = TRUE;
+			continue;
+		}
+	}
+
+	if (blShell) {
+		if (0 > SYNOServiceSSHPortGet(&iPort)) {
+			SYSLOG(LOG_ERR, "Failed to SYNOServiceSSHPortGet()" SLIBERR_FMT, SLIBERR_ARGS);
+			goto End;
+		}
+		if (!IsPortDuplicated(iPort, options->ports, options->num_ports)) {
+			options->ports[options->num_ports++] = iPort;
+		}
+	}
+
+	if (blSftpd) {
+		if (0 > SYNOSFTPConfigGet(SFTP_CONF_GENERAL, &conf)) {
+			SYSLOG(LOG_ERR, "Failed to SYNOSFTPConfigGet()" SLIBERR_FMT, SLIBERR_ARGS);
+			goto End;
+		}
+		if (!IsPortDuplicated(conf.port, options->ports, options->num_ports)) {
+			options->ports[options->num_ports++] = conf.port;
+		}
+	}
+
+	if (blRsync) {
+		if (0 > SYNORsyncSSHPortGet(&iPort)) {
+			SYSLOG(LOG_ERR, "Failed to SYNORsyncSSHPortGet()." SLIBERR_FMT, SLIBERR_ARGS);
+			goto End;
+		}
+		if (!IsPortDuplicated(iPort, options->ports, options->num_ports)) {
+			options->ports[options->num_ports++] = iPort;
+		}
+	}
+
+	iRet = 0;
+End:
+	if (pslLines) {
+		SLIBCSzListFree(pslLines);
+	}
+	return iRet;
+}
+#endif /* MY_ABC_HERE */
 void
 fill_default_server_options(ServerOptions *options)
 {
@@ -316,6 +460,13 @@ fill_default_server_options(ServerOptions *options)
 		    _PATH_HOST_XMSS_KEY_FILE, 0);
 #endif /* WITH_XMSS */
 	}
+#ifdef MY_ABC_HERE
+	/* Check reference file and add listening port for each service. */
+	if (0 > SYNOSSHServicePortFill(options)) {
+		SYSLOG(LOG_ERR, "Failed to SYNOSSHServicePortFill()");
+		fatal("Failed to load port setting.");
+	}
+#endif /* MY_ABC_HERE */
 	/* No certificates by default */
 	if (options->num_ports == 0)
 		options->ports[options->num_ports++] = SSH_DEFAULT_PORT;
@@ -439,9 +590,9 @@ fill_default_server_options(ServerOptions *options)
 	if (options->permit_tun == -1)
 		options->permit_tun = SSH_TUNMODE_NO;
 	if (options->ip_qos_interactive == -1)
-		options->ip_qos_interactive = IPTOS_DSCP_AF21;
+		options->ip_qos_interactive = IPTOS_LOWDELAY;
 	if (options->ip_qos_bulk == -1)
-		options->ip_qos_bulk = IPTOS_DSCP_CS1;
+		options->ip_qos_bulk = IPTOS_THROUGHPUT;
 	if (options->version_addendum == NULL)
 		options->version_addendum = xstrdup("");
 	if (options->fwd_opts.streamlocal_bind_mask == (mode_t)-1)
@@ -543,6 +694,9 @@ typedef enum {
 	sStreamLocalBindMask, sStreamLocalBindUnlink,
 	sAllowStreamLocalForwarding, sFingerprintHash, sDisableForwarding,
 	sExposeAuthInfo, sRDomain, sPubkeyAuthOptions, sSecurityKeyProvider,
+#ifdef SYNO_SOFS_LSYNCD
+	sSYNOSoFSLsyncd,
+#endif /* SYNO_SOFS_LSYNCD */
 	sDeprecated, sIgnore, sUnsupported
 } ServerOpCodes;
 
@@ -695,6 +849,9 @@ static struct {
 	{ "rdomain", sRDomain, SSHCFG_ALL },
 	{ "casignaturealgorithms", sCASignatureAlgorithms, SSHCFG_ALL },
 	{ "securitykeyprovider", sSecurityKeyProvider, SSHCFG_GLOBAL },
+#ifdef SYNO_SOFS_LSYNCD
+	{ "synosofslsyncd", sSYNOSoFSLsyncd, SSHCFG_GLOBAL },
+#endif /* SYNO_SOFS_LSYNCD */
 	{ NULL, sBadOption, 0 }
 };
 
@@ -888,10 +1045,12 @@ process_queued_listen_addrs(ServerOptions *options)
 	u_int i;
 	struct queued_listenaddr *qla;
 
+#ifndef MY_ABC_HERE
 	if (options->num_ports == 0)
 		options->ports[options->num_ports++] = SSH_DEFAULT_PORT;
 	if (options->address_family == -1)
 		options->address_family = AF_UNSPEC;
+#endif /* !MY_ABC_HERE */
 
 	for (i = 0; i < options->num_queued_listens; i++) {
 		qla = &options->queued_listen_addrs[i];
@@ -1085,11 +1244,25 @@ match_cfg_line(char **condition, int line, struct connection_info *ci)
 			}
 			if (ci->user == NULL)
 				match_test_missing_fatal("User", "user");
+#ifdef MY_ABC_HERE
+			uint32_t i = 0;
+			size_t user_len = strlen(ci->user);
+			char* user_tolower = xstrdup(ci->user);
+			for (i = 0; i < user_len; i++) {
+				user_tolower[i] = isupper((u_char)user_tolower[i]) ?
+					tolower((u_char)user_tolower[i]) : user_tolower[i];
+			}
+			if (match_pattern_list(user_tolower, arg, 1) != 1)
+#else
 			if (match_usergroup_pattern_list(ci->user, arg) != 1)
+#endif
 				result = 0;
 			else
 				debug("user %.100s matched 'User %.100s' at "
 				    "line %d", ci->user, arg, line);
+#ifdef MY_ABC_HERE
+			free(user_tolower);
+#endif
 		} else if (strcasecmp(attrib, "group") == 0) {
 			if (ci == NULL || (ci->test && ci->user == NULL)) {
 				result = 0;
@@ -2337,6 +2510,12 @@ process_server_config_line_depth(ServerOptions *options, char *line,
 		if (*activep && *charptr == NULL)
 			*charptr = xstrdup(arg);
 		break;
+
+#ifdef SYNO_SOFS_LSYNCD
+	case sSYNOSoFSLsyncd:
+		intptr = &options->syno_sofs_lsyncd;
+		goto parse_flag;
+#endif /* SYNO_SOFS_LSYNCD */
 
 	case sDeprecated:
 	case sIgnore:

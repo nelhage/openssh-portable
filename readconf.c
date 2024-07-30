@@ -1,4 +1,7 @@
-/* $OpenBSD: readconf.c,v 1.326 2020/02/06 22:46:31 djm Exp $ */
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
+/* $OpenBSD: readconf.c,v 1.283 2018/02/23 15:58:37 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -1996,6 +1999,9 @@ initialize_options(Options * options)
 	options->update_hostkeys = -1;
 	options->hostbased_key_types = NULL;
 	options->pubkey_key_types = NULL;
+#ifdef MY_ABC_HERE
+	options->pass_file = NULL;
+#endif /* MY_ABC_HERE */
 }
 
 /*
@@ -2157,9 +2163,9 @@ fill_default_options(Options * options)
 	if (options->visual_host_key == -1)
 		options->visual_host_key = 0;
 	if (options->ip_qos_interactive == -1)
-		options->ip_qos_interactive = IPTOS_DSCP_AF21;
+		options->ip_qos_interactive = IPTOS_LOWDELAY;
 	if (options->ip_qos_bulk == -1)
-		options->ip_qos_bulk = IPTOS_DSCP_CS1;
+		options->ip_qos_bulk = IPTOS_THROUGHPUT;
 	if (options->request_tty == -1)
 		options->request_tty = REQUEST_TTY_AUTO;
 	if (options->proxy_use_fdpass == -1)

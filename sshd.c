@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: sshd.c,v 1.549 2020/01/31 23:13:04 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -123,6 +126,9 @@
 #include "version.h"
 #include "ssherr.h"
 #include "sk-api.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
 
 /* Re-exec fds */
 #define REEXEC_DEVCRYPTO_RESERVED_FD	(STDERR_FILENO + 1)
@@ -588,7 +594,9 @@ privsep_postauth(struct ssh *ssh, Authctxt *authctxt)
 	reseed_prngs();
 
 	/* Drop privileges */
+#ifndef MY_ABC_HERE
 	do_setusercontext(authctxt->pw);
+#endif /* MY_ABC_HERE */
 
  skip:
 	/* It is safe now to apply the key state */
@@ -1755,7 +1763,13 @@ main(int ac, char **av)
 
 	/* Store privilege separation user for later use if required. */
 	privsep_chroot = use_privsep && (getuid() == 0 || geteuid() == 0);
+#ifdef MY_ABC_HERE
+	char *real_name = NULL;
+	real_name = resolve_real_name(SSH_PRIVSEP_USER);
+	if ((privsep_pw = getpwnam(real_name)) == NULL) {
+#else
 	if ((privsep_pw = getpwnam(SSH_PRIVSEP_USER)) == NULL) {
+#endif
 		if (privsep_chroot || options.kerberos_authentication)
 			fatal("Privilege separation user %s does not exist",
 			    SSH_PRIVSEP_USER);
@@ -1765,6 +1779,9 @@ main(int ac, char **av)
 		privsep_pw->pw_passwd = xstrdup("*");
 	}
 	endpwent();
+#ifdef MY_ABC_HERE
+	free(real_name);
+#endif
 
 	/* load host keys */
 	sensitive_data.host_keys = xcalloc(options.num_host_key_files,
@@ -2134,6 +2151,14 @@ main(int ac, char **av)
 	 */
 	remote_ip = ssh_remote_ipaddr(ssh);
 
+#ifdef MY_ABC_HERE
+	char szCmd[256] = {0};
+
+	snprintf(szCmd, sizeof(szCmd), "/usr/syno/bin/synoautoblock --deny \"%s\"", remote_ip);
+	if (1 == WEXITSTATUS(system(szCmd))) {
+		exit(EXIT_FAILURE);
+	}
+#endif /* MY_ABC_HERE */
 #ifdef SSH_AUDIT_EVENTS
 	audit_connection_from(remote_ip, remote_port);
 #endif

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*	$OpenBSD: readpassphrase.h,v 1.5 2003/06/17 21:56:23 millert Exp $	*/
 
 /*
@@ -38,6 +41,9 @@
 #define RPP_STDIN       0x20		/* Read from stdin, not /dev/tty */
 
 char * readpassphrase(const char *, char *, size_t, int);
+#ifdef MY_ABC_HERE
+char * readpassphrase_from_file(const char *, char *, size_t);
+#endif /* MY_ABC_HERE */
 
 #endif /* HAVE_READPASSPHRASE */
 

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: misc.h,v 1.84 2020/01/24 23:54:40 djm Exp $ */
 
 /*
@@ -183,6 +186,9 @@ int	opt_match(const char **opts, const char *term);
 struct notifier_ctx;
 
 char	*read_passphrase(const char *, int);
+#ifdef MY_ABC_HERE
+char	*read_passphrase_from_file(const char *);
+#endif /* MY_ABC_HERE */
 int	 ask_permission(const char *, ...) __attribute__((format(printf, 1, 2)));
 struct notifier_ctx *notify_start(int, const char *, ...)
 	__attribute__((format(printf, 2, 3)));

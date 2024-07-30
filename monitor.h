@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: monitor.h,v 1.23 2019/01/19 21:43:56 djm Exp $ */
 
 /*
@@ -91,5 +94,9 @@ void mm_request_send(int, enum monitor_reqtype, struct sshbuf *);
 void mm_request_receive(int, struct sshbuf *);
 void mm_request_receive_expect(int, enum monitor_reqtype, struct sshbuf *);
 void mm_get_keystate(struct ssh *, struct monitor *);
+
+#ifdef MY_ABC_HERE
+char *resolve_real_name(const char *);
+#endif
 
 #endif /* _MONITOR_H_ */

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: ssh.c,v 1.519 2020/02/07 03:54:44 dtucker Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -667,7 +670,11 @@ main(int ac, char **av)
 	argv0 = av[0];
 
  again:
+#ifdef MY_ABC_HERE
+	while ((opt = getopt(ac, av, "1246ab:c:d:e:fgi:kl:m:no:p:qstvx"
+#else
 	while ((opt = getopt(ac, av, "1246ab:c:e:fgi:kl:m:no:p:qstvx"
+#endif /* MY_ABC_HERE */
 	    "AB:CD:E:F:GI:J:KL:MNO:PQ:R:S:TVw:W:XYy")) != -1) {
 		switch (opt) {
 		case '1':
@@ -1012,6 +1019,17 @@ main(int ac, char **av)
 		case 'F':
 			config = optarg;
 			break;
+#ifdef MY_ABC_HERE
+		case 'd':
+			if (stat(optarg, &st) < 0) {
+				fprintf(stderr, "Warning: Password file %s "
+				    "not accessible: %s.\n", optarg,
+				    strerror(errno));
+				break;
+			}
+			options.pass_file = xstrdup(optarg);			
+			break;
+#endif /* MY_ABC_HERE */
 		default:
 			usage();
 		}
@@ -1605,6 +1623,9 @@ main(int ac, char **av)
 	}
 
  skip_connect:
+#ifdef MY_ABC_HERE
+	if (options.pass_file) free(options.pass_file);
+#endif /* MY_ABC_HERE */
 	exit_status = ssh_session2(ssh, pw);
 	ssh_packet_close(ssh);
 

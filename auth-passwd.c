@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: auth-passwd.c,v 1.47 2018/07/09 21:26:02 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -55,6 +58,9 @@
 #include "hostfile.h"
 #include "auth.h"
 #include "auth-options.h"
+#ifdef MY_ABC_HERE
+#include "sftp-synolib.h"
+#endif /* MY_ABC_HERE */
 
 extern struct sshbuf *loginmsg;
 extern ServerOptions options;
@@ -82,6 +88,12 @@ auth_password(struct ssh *ssh, const char *password)
 #if defined(USE_SHADOW) && defined(HAS_SHADOW_EXPIRE)
 	static int expire_checked = 0;
 #endif
+#ifdef MY_ABC_HERE
+	if (!strcmp(authctxt->user, SZD_ANONYMOUS)) {
+		result = 1;
+		goto Done;
+	}
+#endif /* MY_ABC_HERE */
 
 	if (strlen(password) > MAX_PASSWORD_LEN)
 		return 0;
@@ -90,8 +102,10 @@ auth_password(struct ssh *ssh, const char *password)
 	if (pw->pw_uid == 0 && options.permit_root_login != PERMIT_YES)
 		ok = 0;
 #endif
+#ifndef MY_ABC_HERE
 	if (*password == '\0' && options.permit_empty_passwd == 0)
 		return 0;
+#endif /* MY_ABC_HERE */
 
 #ifdef KRB5
 	if (options.kerberos_authentication == 1) {
@@ -112,8 +126,19 @@ auth_password(struct ssh *ssh, const char *password)
 	}
 #endif
 #ifdef USE_PAM
+#ifdef MY_ABC_HERE
+	if (options.use_pam) {
+		result = sshpam_auth_passwd(authctxt, password);
+		/* Empty password is not allowed, even if login success */
+		if ((result && ok) && *password == '\0' && options.permit_empty_passwd == 0) {
+			return 0;
+		}
+		return (result && ok);
+	}
+#else
 	if (options.use_pam)
 		return (sshpam_auth_passwd(authctxt, password) && ok);
+#endif /* MY_ABC_HERE */
 #endif
 #if defined(USE_SHADOW) && defined(HAS_SHADOW_EXPIRE)
 	if (!expire_checked) {
@@ -123,6 +148,15 @@ auth_password(struct ssh *ssh, const char *password)
 	}
 #endif
 	result = sys_auth_passwd(ssh, password);
+#ifdef MY_ABC_HERE
+	/* Empty password is not allowed, even if login success */
+	if ((result && ok) && *password == '\0' && options.permit_empty_passwd == 0) {
+		return 0;
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+Done:
+#endif /* MY_ABC_HERE */
 	if (authctxt->force_pwchange)
 		auth_restrict_session(ssh);
 	return (result && ok);

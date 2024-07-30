@@ -1,0 +1,33 @@
+#!/bin/bash
+# Copyright (c) 2000-2015 Synology Inc. All rights reserved.
+
+if ! checkPlatformFunction SYNO_FEA_AHA_API; then
+	SkipThisProject
+	return
+fi
+
+case ${MakeClean} in
+	[Yy][Ee][Ss])
+		make clean
+		;;
+esac
+
+case ${CleanOnly} in
+	[Yy][Ee][Ss])
+		return
+		;;
+esac
+
+env CC="${CC}" LD="${CC}" AR=${AR} STRIP=${STRIP} RANLIB=${RANLIB} NM=${NM} \
+	CFLAGS="${CFLAGS} -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 " LDFLAGS="${LDFLAGS}" \
+	CPPFLAGS="${CPPFLAGS}" \
+	./configure ${ConfigOpt} \
+	--with-privsep-user=admin \
+	--with-ssl-dir=${SysRootPrefix} \
+	--prefix=/usr \
+	--sysconfdir=/etc/ssh \
+	--with-4in6 \
+	--with-pam
+
+make ${MAKE_FLAGS} JUNIOR_MODE=yes
+# make install

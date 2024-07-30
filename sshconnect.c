@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* $OpenBSD: sshconnect.c,v 1.328 2020/01/25 07:17:18 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -905,6 +908,10 @@ check_host_key(char *hostname, struct sockaddr *hostaddr, u_short port,
 			free(ra);
 			confirmed = confirm(msg, fp);
 			free(fp);
+#ifdef MY_ABC_HERE
+			//if specify password file in command line, skip confirmation of key-gen
+			if (!options.pass_file)
+#endif /* MY_ABC_HERE */
 			if (!confirmed)
 				goto fail;
 			hostkey_trusted = 1; /* user explicitly confirmed */

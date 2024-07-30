@@ -1,0 +1,37 @@
+#!/bin/bash
+# Copyright (c) 2000-2015 Synology Inc. All rights reserved.
+
+case ${MakeClean} in
+	[Yy][Ee][Ss])
+		make clean
+		;;
+esac
+
+case ${CleanOnly} in
+	[Yy][Ee][Ss])
+		return
+		;;
+esac
+
+INCS="`pkg-config --cflags-only-I libsynocore libsynosdk synologd libsynocurconn` `/usr/bin/pkg-config --cflags libsynoftp libsynossh libsynofileop libsynorecycle libsynobandwidth libsynosystemd libsynoacl` -I${SysRootInclude}/uthash"
+LIBS="`pkg-config --libs libsynocore libsynosdk libsynoftp libsynossh libsynofileop libsynorecycle synologd libsynobandwidth libsynocurconn libsynosystemd libsynoacl`"
+
+
+if checkPlatformFunction SYNO_FEA_HYPER_CONVERGED; then
+	echo "build with -DSYNO_SOFS_LSYNCD"
+	CFLAGS+=" -DSYNO_SOFS_LSYNCD"
+fi
+
+env CC="${CC}" LD="${CC}" AR=${AR} STRIP=${STRIP} RANLIB=${RANLIB} NM=${NM} \
+	CFLAGS="${CFLAGS} -DSYNO" LDFLAGS="${LDFLAGS}" LIBS="${LIBS}" \
+	CPPFLAGS="${INCS}" \
+	./configure ${ConfigOpt} \
+	--with-privsep-user=admin \
+	--with-ssl-dir=${SysRootPrefix} \
+	--prefix=/usr \
+	--sysconfdir=/etc/ssh \
+	--with-4in6 \
+	--with-pam
+
+make ${MAKE_FLAGS}
+# make install
